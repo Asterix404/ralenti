@@ -9,7 +9,8 @@ ext = ["ralenti_ext"] + [f"ralenti_ext.{f[:-3]}" for f in os.listdir(ext_dir)
 a = Analysis(
     ["run_ralenti.py"],
     pathex=["."],
-    datas=[("ralenti/resources", "ralenti/resources")] + collect_data_files("qtawesome"),
+    datas=[("ralenti/resources", "ralenti/resources"), ("CHANGELOG.md", "ralenti/resources")]
+          + collect_data_files("qtawesome"),
     hiddenimports=["PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtSvg",
                    "qtawesome", "qtpy", "psutil"] + ext,
     excludes=["tkinter", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",

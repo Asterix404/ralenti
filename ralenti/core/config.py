@@ -41,6 +41,7 @@ class Settings:
     ffmpeg_repo: str = ""
     rife_repo: str = ""
     sidebar_collapsed: bool = False
+    last_version: str = ""
 
     @classmethod
     def load(cls) -> "Settings":

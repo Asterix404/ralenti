@@ -32,6 +32,21 @@ jobs:
           if ($tag -ne $ver) { throw "Tag $tag does not match ralenti.__version__ $ver" }
           "VER=$ver" >> $env:GITHUB_ENV
 
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $out = @(); $in = $false
+          foreach ($l in Get-Content CHANGELOG.md -Encoding utf8) {
+            if ($l -match '^## ') {
+              if ($in) { break }
+              if ($l -match ("^##\s+v?" + [regex]::Escape($env:VER) + "\b")) { $in = $true }
+            }
+            if ($in) { $out += $l }
+          }
+          if (-not $out) { throw "CHANGELOG.md has no section for $env:VER" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          ($out -join "`n") | Out-File dist\notes.md -Encoding utf8
+
       - name: Build app
         run: pyinstaller --noconfirm --clean ralenti.spec
 
@@ -53,4 +68,4 @@ jobs:
           files: |
             dist/Ralenti-*-setup.exe
             dist/Ralenti-*-portable.zip
-          generate_release_notes: true
+          body_path: dist/notes.md

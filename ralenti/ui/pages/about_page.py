@@ -53,7 +53,7 @@ class AboutPage(QWidget):
         btns.addWidget(button("Check for updates", lambda: self.window().check_updates(manual=True),
                               icon="arrow-clockwise"))
         btns.addWidget(button("Report an issue", lambda: _open(REPO_URL + "/issues"), "ghost", icon="bug"))
-        btns.addWidget(button("Changelog", lambda: _open(REPO_URL + "/blob/main/CHANGELOG.md"), "ghost",
+        btns.addWidget(button("Changelog", lambda: self._changelog(), "ghost",
                               icon="scroll"))
         btns.addStretch(1)
         for w in (name, tag):
@@ -109,3 +109,13 @@ class AboutPage(QWidget):
     def showEvent(self, e):
         super().showEvent(e)
         self._fill()
+
+
+
+def _about_changelog(self) -> None:
+    from ...core import changelog
+    from ..changelog_view import ChangelogDialog
+    ChangelogDialog(self, changelog.load(), "Changelog", f"You're running Ralenti {__version__}.").exec()
+
+
+AboutPage._changelog = _about_changelog

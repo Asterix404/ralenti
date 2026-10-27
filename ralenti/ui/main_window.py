@@ -134,6 +134,7 @@ class MainWindow(QMainWindow):
         self.nav.button(0).setChecked(True); self.stack.setCurrentIndex(0)
         self._update_nav()
         QTimer.singleShot(2500, lambda: self.check_updates(manual=False))
+        QTimer.singleShot(600, self._whats_new)
         self._restore_geometry()
         self._init_sidebar()
 
@@ -423,3 +424,60 @@ def _update_nav_v82(self) -> None:
 for _name, _fn in {"_init_sidebar": _init_sidebar, "toggle_sidebar": toggle_sidebar, "_side_done": _side_done,
                    "_side_texts": _side_texts, "_update_nav": _update_nav_v82}.items():
     setattr(MainWindow, _name, _fn)
+
+
+
+# ===================== 0.9.4: in-app updates and "what's new" =====================
+def _check_updates_v094(self, manual: bool = False) -> None:
+    from ..core import extensions, updates
+    from .update_dialog import UpdateDialog
+    from .workers import run_async
+    if extensions.load().disable_updates:
+        if manual:
+            self.toast("Update checks are off in this build.", "info")
+        return
+    s = self.settings
+    if not manual and not s.check_updates:
+        return
+    if not s.update_repo:
+        if manual:
+            self.toast("Set the release source in Settings → Updates first", "warn")
+        return
+
+    def done(u):
+        if u is None:
+            if manual:
+                self.toast(f"You're up to date (v{__version__})", "ok")
+        elif manual or u.version != s.skipped_version:
+            UpdateDialog(self, u).exec()
+
+    def fail(m):
+        if manual:
+            self.toast(f"Update check failed: {m}", "warn")
+
+    run_async(lambda: updates.check(s.update_repo, __version__), done, fail)
+
+
+def _whats_new(self) -> None:
+    import shutil
+    from ..core import changelog
+    from ..core.config import APP_DIR
+    from ..core.updates import is_newer
+    from .changelog_view import ChangelogDialog
+    shutil.rmtree(APP_DIR / "updates", ignore_errors=True)
+    s = self.settings
+    prev = getattr(s, "last_version", "") or ""
+    if prev == __version__:
+        return
+    s.last_version = __version__
+    s.save()
+    if not prev:
+        return
+    entries = [e for e in changelog.load()
+               if is_newer(e["version"], prev) and not is_newer(e["version"], __version__)]
+    if entries:
+        ChangelogDialog(self, entries, f"What's new in Ralenti {__version__}", f"Updated from {prev}.").exec()
+
+
+MainWindow.check_updates = _check_updates_v094
+MainWindow._whats_new = _whats_new

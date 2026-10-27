@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ralenti"
-version = "0.9.3"
+version = "0.9.4"
 description = "Motion & encoding studio: AI frame interpolation, VMAF encoding and lossless tools"
 readme = "README.md"
 license = "MIT"

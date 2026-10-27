@@ -70,12 +70,18 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 
 [CustomMessages]
 english.DeleteData=Also delete your Ralenti settings, presets, logs and downloaded tools (FFmpeg, RIFE)?%n%nThey are stored in %1.
 french.DeleteData=Supprimer aussi les réglages, préréglages, journaux et outils téléchargés de Ralenti (FFmpeg, RIFE) ?%n%nIls se trouvent dans %1.
 
 [Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
