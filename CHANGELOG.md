@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.9.2
+- Extensions load from %APPDATA%\Ralenti\extensions and survive app updates
+
 ## 0.9.1
 - Extensions can provide their own update instructions
 

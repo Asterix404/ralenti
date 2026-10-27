@@ -35,6 +35,10 @@ def load() -> ExtensionAPI:
     _api = ExtensionAPI()
     if os.environ.get("RALENTI_NO_EXTENSIONS"):
         return _api
+    import sys
+    from .config import EXT_DIR
+    if (EXT_DIR / "ralenti_ext").is_dir() and str(EXT_DIR) not in sys.path:
+        sys.path.append(str(EXT_DIR))   # an in-tree copy (development) still takes precedence
     try:
         import ralenti_ext
     except ModuleNotFoundError as e:
@@ -44,5 +48,18 @@ def load() -> ExtensionAPI:
     try:
         ralenti_ext.register(_api)
     except Exception:
-        traceback.print_exc()
+        _log_error()
     return _api
+
+
+def _log_error() -> None:
+    """Extensions run without a console in the built app: keep the reason in a log file."""
+    traceback.print_exc()
+    try:
+        import time
+        from .config import LOGS_DIR
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOGS_DIR / "extensions.log", "a", encoding="utf-8") as f:
+            f.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')}\n{traceback.format_exc()}")
+    except OSError:
+        pass

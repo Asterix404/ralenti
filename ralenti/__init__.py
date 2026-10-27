@@ -1,4 +1,4 @@
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 APP_NAME = "Ralenti"
 AUTHOR = "Asterix404"
 REPO_URL = "https://github.com/Asterix404/ralenti"
