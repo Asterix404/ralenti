@@ -113,6 +113,7 @@ class SettingsPage(QWidget):
             except Exception:
                 traceback.print_exc()
 
+        cv.addWidget(Section("set.ext", "Extensions", "package", self._ext_section(), settings))
         upd = QWidget(); uv = QVBoxLayout(upd); uv.setContentsMargins(0, 0, 0, 0); uv.setSpacing(12)
         self.auto_update = QCheckBox("Check for updates when Ralenti starts")
         self.auto_update.setChecked(settings.check_updates)
@@ -270,3 +271,93 @@ class SettingsPage(QWidget):
         args = sys.argv[1:] if getattr(sys, "frozen", False) else ["-m", "ralenti", *sys.argv[1:]]
         if QProcess.startDetached(sys.executable, args):
             self.window().close()
+
+
+
+# ---------- extensions ----------
+def _ext_section(self):
+    w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(12)
+    self.ext_status = QLabel(); self.ext_status.setWordWrap(True); self.ext_status.setTextFormat(Qt.RichText)
+    v.addWidget(self.ext_status)
+    row = QHBoxLayout(); row.setSpacing(6)
+    row.addWidget(button("Install from folder", self._ext_install_dir, icon="folder-open"))
+    row.addWidget(button("Install from zip", self._ext_install_zip, icon="package"))
+    self.ext_remove_btn = button("Remove", self._ext_remove, "ghost", icon="trash")
+    row.addWidget(self.ext_remove_btn)
+    row.addWidget(button("Open folder", self._ext_open, "ghost", icon="folder-open"))
+    row.addStretch(1)
+    self.ext_restart_btn = button("Restart to apply", self._restart, "accent", icon="arrow-clockwise")
+    row.addWidget(self.ext_restart_btn)
+    v.addLayout(row)
+    hint = QLabel("Extensions add optional engines or features. They're kept in your Ralenti data folder, "
+                  "so app updates don't remove them.")
+    hint.setObjectName("Hint"); hint.setWordWrap(True)
+    v.addWidget(hint)
+    self.ext_restart_btn.hide()
+    self._ext_refresh()
+    return w
+
+
+def _ext_refresh(self, changed: bool = False) -> None:
+    api = extensions.load()
+    if api.error:
+        text = (f"<b style='color:{theme.DANGER}'>Couldn't load the extension</b> · {api.error}<br>"
+                f"<span style='color:{theme.FAINT}'>Details in logs\\extensions.log</span>")
+    elif api.name or api.engines:
+        names = ", ".join(e.name for e in api.engines)
+        text = f"<b style='color:{theme.OK}'>Loaded</b> · {api.name or 'Extension'}" + (f" · {names}" if names else "")
+    elif extensions.installed():
+        text = f"<b style='color:{theme.WARN}'>Installed</b> · restart Ralenti to load it"
+    else:
+        text = f"<span style='color:{theme.MUTED}'>No extension installed.</span>"
+    if changed:
+        text += f"<br><b style='color:{theme.WARN}'>Restart Ralenti to apply the change.</b>"
+        self.ext_restart_btn.show()
+    self.ext_status.setText(text)
+    self.ext_remove_btn.setVisible(extensions.installed())
+
+
+def _ext_install(self, path: str) -> None:
+    try:
+        extensions.install(path)
+    except Exception as e:
+        notify(self, f"Install failed: {e}", "error")
+        return
+    notify(self, "Extension installed. Restart Ralenti to load it.", "ok")
+    self._ext_refresh(changed=True)
+
+
+def _ext_install_dir(self) -> None:
+    p = QFileDialog.getExistingDirectory(self, "Choose the extension folder (ralenti_ext or the folder containing it)")
+    if p:
+        self._ext_install(p)
+
+
+def _ext_install_zip(self) -> None:
+    p, _ = QFileDialog.getOpenFileName(self, "Choose an extension zip", "", "Zip files (*.zip)")
+    if p:
+        self._ext_install(p)
+
+
+def _ext_remove(self) -> None:
+    from PySide6.QtWidgets import QMessageBox
+    if QMessageBox.question(self, "Ralenti", "Remove the installed extension?") != QMessageBox.StandardButton.Yes:
+        return
+    try:
+        extensions.remove()
+    except Exception as e:
+        notify(self, f"Couldn't remove it: {e}", "error")
+        return
+    self._ext_refresh(changed=True)
+
+
+def _ext_open(self) -> None:
+    from ...core.config import EXT_DIR
+    EXT_DIR.mkdir(parents=True, exist_ok=True)
+    os.startfile(EXT_DIR)
+
+
+for _n, _f in {"_ext_section": _ext_section, "_ext_refresh": _ext_refresh, "_ext_install": _ext_install,
+               "_ext_install_dir": _ext_install_dir, "_ext_install_zip": _ext_install_zip,
+               "_ext_remove": _ext_remove, "_ext_open": _ext_open}.items():
+    setattr(SettingsPage, _n, _f)

@@ -128,8 +128,8 @@ tests/       pytest suite
 ~~~
 
 Ralenti has a small engine interface (ralenti/core/engines.py): additional interpolation engines can
-be registered by an optional extension package without changing the app. Ralenti loads it from
-%APPDATA%\Ralenti\extensions\ralenti_ext if present; errors are written to logs\extensions.log.
+be registered by an optional extension package without changing the app. Install one from Settings > Extensions; it's kept in
+%APPDATA%\Ralenti\extensions and survives app updates.
 
 ## License
 

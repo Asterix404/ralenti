@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3
+- Settings > Extensions: install, remove and check optional extensions
+- A broken extension no longer prevents Ralenti from starting
+
 ## 0.9.2
 - Extensions load from %APPDATA%\Ralenti\extensions and survive app updates
 
