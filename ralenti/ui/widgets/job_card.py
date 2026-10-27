@@ -74,10 +74,11 @@ class JobCard(QFrame):
         self.output = muted(QLabel()); self.metrics = muted(QLabel())
         self.resume_btn = self._quick("Resume", "resume", "arrow-clockwise")
         self.pause_btn = self._quick("Pause", "pause", "pause")
+        self.live_btn = self._quick("Watch live", "live", "eye")
         self.play_btn = self._quick("Play", "play", "play-fill")
         self.folder_btn = self._quick("Show in folder", "folder", "folder-open")
         bottom.addWidget(self.output, 1); bottom.addWidget(self.metrics)
-        for b in (self.pause_btn, self.resume_btn, self.play_btn, self.folder_btn):
+        for b in (self.live_btn, self.pause_btn, self.resume_btn, self.play_btn, self.folder_btn):
             bottom.addWidget(b)
 
         body.addLayout(top); body.addWidget(self.track); body.addWidget(self.detail)
@@ -164,3 +165,5 @@ class JobCard(QFrame):
         self.folder_btn.setVisible(st == Status.DONE)
         self.resume_btn.setVisible(st in (Status.FAILED, Status.CANCELLED, Status.PAUSED))
         self.pause_btn.setVisible(st in (Status.RUNNING, Status.QUEUED) and job.kind != "preview")
+        self.live_btn.setVisible(job.kind == "interpolate" and bool(job.plan.get("segmented"))
+                                 and st in (Status.RUNNING, Status.PAUSED))

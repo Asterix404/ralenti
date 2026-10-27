@@ -432,6 +432,12 @@ class InterpolatePage(QWidget):
             rows.append(("speaker-high", "Audio", "Original · ends early, out of sync", "warn"))
         else:
             rows.append(("speaker-high", "Audio", AUDIO_SUMMARY.get(a_key, "")))
+        if info and o["model"]:
+            from ...core.estimate import describe, estimate
+            w0, h0 = (st["crop"][0], st["crop"][1]) if st["manual"] and st["crop"] else (info.width, info.height)
+            est = describe(estimate(info, {**o, "vmaf": self.vmaf.effective()}, scaled_size(w0, h0, o["scale"]),
+                                    st["start"], st["end"], self.qm.rates))
+            rows.append(("hourglass", "Estimate", est or "Run the benchmark (Settings › Performance) to see one"))
         rows.append(("export", "Save to", self.out_dir.text() or "Next to the source file"))
         self.summary.set_rows(rows, warn)
         self.summary.set_action("Add to queue" if info else "Open a video to get started", bool(info) and not warn)

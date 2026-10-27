@@ -245,6 +245,9 @@ class QueuePage(QWidget):
         elif key == "copy":
             QApplication.clipboard().setText(job.output)
             notify(self, "Output path copied", "ok")
+        elif key == "live":
+            from ..live_view import open_live
+            open_live(self, self.qm, job)
         elif key == "pause":
             self.qm.pause(job_id)
         elif key == "resume" and job.status == Status.PAUSED:

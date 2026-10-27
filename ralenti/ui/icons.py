@@ -224,3 +224,7 @@ def icon(name: str, tone: str = "muted", active: str | None = None, checked: str
 
 
 ALIASES.update({"pause": ["ph.pause", "mdi6.pause", "mdi.pause"]})
+
+
+ALIASES.update({"eye": ["ph.eye", "mdi6.eye", "mdi.eye"],
+                "hourglass": ["ph.hourglass", "mdi6.timer-sand", "mdi.timer-sand"]})

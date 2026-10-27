@@ -113,6 +113,7 @@ class SettingsPage(QWidget):
             except Exception:
                 traceback.print_exc()
 
+        cv.addWidget(Section("set.perf", "Performance", "gauge", self._perf_section(), settings))
         cv.addWidget(Section("set.ext", "Extensions", "package", self._ext_section(), settings))
         upd = QWidget(); uv = QVBoxLayout(upd); uv.setContentsMargins(0, 0, 0, 0); uv.setSpacing(12)
         self.auto_update = QCheckBox("Check for updates when Ralenti starts")
@@ -360,4 +361,120 @@ def _ext_open(self) -> None:
 for _n, _f in {"_ext_section": _ext_section, "_ext_refresh": _ext_refresh, "_ext_install": _ext_install,
                "_ext_install_dir": _ext_install_dir, "_ext_install_zip": _ext_install_zip,
                "_ext_remove": _ext_remove, "_ext_open": _ext_open}.items():
+    setattr(SettingsPage, _n, _f)
+
+
+
+# ---------- performance (benchmark) ----------
+import html as _h  # noqa: E402
+
+from PySide6.QtCore import QObject  # noqa: E402
+
+
+class _BenchSig(QObject):
+    progress = Signal(float, str)
+    finished = Signal(object, str)
+
+
+def _perf_section(self):
+    from ..widgets.anim import SmoothBar
+    w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(12)
+    self.perf_info = QLabel(); self.perf_info.setWordWrap(True); self.perf_info.setTextFormat(Qt.RichText)
+    v.addWidget(self.perf_info)
+    self.perf_prog = QWidget()
+    ph = QHBoxLayout(self.perf_prog); ph.setContentsMargins(0, 0, 0, 0); ph.setSpacing(12)
+    self.perf_bar = SmoothBar()
+    self.perf_lbl = QLabel(); self.perf_lbl.setObjectName("Hint"); self.perf_lbl.setMinimumWidth(220)
+    ph.addWidget(self.perf_bar, 1); ph.addWidget(self.perf_lbl)
+    v.addWidget(self.perf_prog)
+    row = QHBoxLayout(); row.setSpacing(6)
+    self.perf_run = button("Run benchmark", self._perf_run, "accent", icon="gauge")
+    self.perf_cancel = button("Cancel", self._perf_stop, "ghost", icon="x")
+    row.addWidget(self.perf_run); row.addWidget(self.perf_cancel); row.addStretch(1)
+    v.addLayout(row)
+    self.perf_prog.hide(); self.perf_cancel.hide()
+    self._perf_fill()
+    return w
+
+
+def _perf_fill(self) -> None:
+    from ...core.encoders import ENCODERS
+    from ...core.estimate import load_bench
+    b = load_bench()
+    if not b:
+        self.perf_info.setText(f"<span style='color:{theme.MUTED}'>No benchmark yet. It renders a 3-second test clip "
+                               "with each installed AI model and times your encoders, so Ralenti can estimate how "
+                               "long jobs take. About one to three minutes.</span>")
+        return
+    mp = 1920 * 1080 / 1e6
+    rows = []
+    for code, m in (b.get("models") or {}).items():
+        if m.get("error"):
+            val = f"<span style='color:{theme.DANGER}'>failed: {_h.escape(m['error'])}</span>"
+        else:
+            val = f"<b>{m['mpfs'] / mp:.1f} fps</b>" + (f" · GPU {m['util']}%" if m.get("util") is not None else "")
+        rows.append((m.get("label", code), val))
+    for key, val in (b.get("encoders") or {}).items():
+        e = ENCODERS.get(key)
+        rows.append((e.label if e else key, f"<b>{val / mp:.0f} fps</b>"))
+    if b.get("vmaf"):
+        rows.append(("VMAF scoring", f"<b>{b['vmaf'] / mp:.0f} fps</b>"))
+    table = "".join(f"<tr><td style='color:{theme.MUTED}; padding-right:20px'>{_h.escape(k)}</td><td>{v}</td></tr>"
+                    for k, v in rows)
+    self.perf_info.setText(f"<span style='color:{theme.FAINT}'>{b.get('date', '')} · {_h.escape(b.get('gpu') or 'GPU')}"
+                           f" · 1080p, AI models at 2× frames</span>"
+                           f"<table cellspacing='0' cellpadding='3' style='margin-top:6px'>{table}</table>")
+
+
+def _perf_run(self) -> None:
+    import threading
+    from ...core import benchmark
+    qm = self.qm
+    if qm.is_running or qm.preview_running:
+        notify(self, "Pause or stop the queue first: running jobs would skew the results.", "warn")
+        return
+    if not qm.tc.ffmpeg:
+        notify(self, "FFmpeg is required. Get it from Downloads.", "warn")
+        return
+    self._bench_cancel = threading.Event()
+    self._bench_sig = s = _BenchSig()
+    s.progress.connect(self._perf_progress)
+    s.finished.connect(self._perf_done)
+    self.perf_prog.show(); self.perf_cancel.show(); self.perf_run.setEnabled(False)
+    self.perf_bar.set_smooth(0); self.perf_lbl.setText("Starting…")
+    tc, st, ev = qm.tc, self.settings, self._bench_cancel
+
+    def work():
+        try:
+            s.finished.emit(benchmark.run(tc, st, lambda f, t: s.progress.emit(f, t), ev), "")
+        except benchmark.Cancelled:
+            s.finished.emit(None, "Cancelled")
+        except Exception as e:
+            s.finished.emit(None, str(e) or type(e).__name__)
+
+    threading.Thread(target=work, daemon=True, name="ralenti-bench").start()
+
+
+def _perf_progress(self, f: float, text: str) -> None:
+    self.perf_bar.set_smooth(f * 1000)
+    self.perf_lbl.setText(text)
+
+
+def _perf_stop(self) -> None:
+    if getattr(self, "_bench_cancel", None):
+        self._bench_cancel.set()
+
+
+def _perf_done(self, res, err: str) -> None:
+    self.perf_prog.hide(); self.perf_cancel.hide(); self.perf_run.setEnabled(True)
+    if res:
+        self._perf_fill()
+        self.saved.emit()
+        notify(self, "Benchmark done. Time estimates now use it.", "ok")
+    elif err != "Cancelled":
+        notify(self, f"Benchmark failed: {err}", "error")
+
+
+for _n, _f in {"_perf_section": _perf_section, "_perf_fill": _perf_fill, "_perf_run": _perf_run,
+               "_perf_progress": _perf_progress, "_perf_stop": _perf_stop, "_perf_done": _perf_done}.items():
     setattr(SettingsPage, _n, _f)

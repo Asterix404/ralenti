@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0 · 2026-10-28
+### New
+- **Watch live**: see an interpolation job while it renders, in Ralenti or in your own player.
+- **Benchmark** (Settings › Performance): measures every installed AI model and encoder on a test clip.
+- **Time estimates** in the Interpolate summary, following every setting; they get more accurate as you finish jobs.
+### Improved
+- Auto concurrency uses the benchmark to know which models already keep your GPU busy.
+
 ## 0.10.0 · 2026-10-28
 ### New
 - **Pause and resume** any job instantly, from the queue bar or a job card. Nothing is lost.

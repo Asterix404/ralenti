@@ -536,7 +536,8 @@ class QueueManager:
         if str(getattr(self.settings, "concurrency", "auto")) == "auto" and heavy \
                 and not any(r.pause.is_set() for r in heavy):
             nxt = self._next()
-            single = self.rates.get("util:" + rate_key(nxt)) if nxt else None
+            from .estimate import bench_util
+            single = (self.rates.get("util:" + rate_key(nxt)) or bench_util(nxt.spec.get("model"))) if nxt else None
             self.scaler.feed(done / dt, util, vram, ram, nxt is not None, single)
 
     # ---------- preview lane ----------
