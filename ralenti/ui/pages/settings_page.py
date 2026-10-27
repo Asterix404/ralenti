@@ -122,6 +122,9 @@ class SettingsPage(QWidget):
         rh.addWidget(self.repo, 1); rh.addWidget(button("Check now", self._check_now, icon="arrow-clockwise"))
         uv.addWidget(Field("Release source (GitHub)", rw, "Ralenti asks GitHub for the newest release of this "
                            "repository. Nothing else is sent."))
+        if ext.update_hint:
+            hn = QLabel(ext.update_hint); hn.setObjectName("Hint"); hn.setWordWrap(True)
+            uv.addWidget(hn)
         if ext.disable_updates:
             note = QLabel("Update checks are off in this build: update it from its own source.")
             note.setObjectName("Hint"); note.setWordWrap(True)

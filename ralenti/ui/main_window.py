@@ -289,7 +289,11 @@ class MainWindow(QMainWindow):
         box.setText(f"<b>Ralenti {u.version}</b> is available. You have {__version__}.")
         if u.notes:
             box.setInformativeText(u.notes)
-        get = box.addButton("Download", QMessageBox.AcceptRole)
+        from ..core import extensions
+        hint = extensions.load().update_hint
+        if hint:
+            box.setInformativeText(((u.notes + "\n\n") if u.notes else "") + hint)
+        get = box.addButton("Open release page" if hint else "Download", QMessageBox.AcceptRole)
         skip = box.addButton("Skip this version", QMessageBox.DestructiveRole)
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()

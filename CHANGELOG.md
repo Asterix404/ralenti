@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.9.1
+- Extensions can provide their own update instructions
+
 ## 0.9.0 · first public release
 - Interpolate: smooth slow motion and higher frame rates with RIFE (free, open source, any Vulkan GPU)
 - Preview takes with before/after and take-vs-take comparison in the player, switchable audio, looping

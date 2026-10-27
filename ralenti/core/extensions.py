@@ -13,6 +13,7 @@ class ExtensionAPI:
         self.settings_sections = []   # factory(settings_page) -> (key, title, icon, widget)
         self.setup_rows = []          # factory(setup_dialog) -> widget with refresh()
         self.disable_updates = False
+        self.update_hint = ""         # shown instead of the Download button when an update is found
 
     def register_engine(self, engine) -> None:
         self.engines.append(engine)
