@@ -236,6 +236,7 @@ QFrame#CompareBox QToolButton {{ border-radius: 8px; padding: 3px 5px; }}
 QFrame#CompareBox QToolButton:checked {{ background: {soft}; }}
 QLabel#VsLabel {{ background: {soft}; color: {a}; border-radius: 8px; padding: 2px 8px; font-size: 7.5pt; font-weight: 800; }}
 QPushButton#Nav[collapsed="true"] {{ text-align: center; padding: 10px 0; margin: 1px 12px; }}
+QProgressBar[state="paused"]::chunk {{ background: {WARN}; }}
 """
 
 

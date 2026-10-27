@@ -15,11 +15,12 @@ from .step_track import StepTrack
 
 KIND = {"interpolate": "Interpolate", "encode": "Encode", "cut": "Cut", "merge": "Merge", "preview": "Preview"}
 STATUS_TEXT = {Status.QUEUED: "Waiting", Status.RUNNING: "Running", Status.DONE: "Done",
-               Status.FAILED: "Failed", Status.CANCELLED: "Stopped"}
+               Status.FAILED: "Failed", Status.CANCELLED: "Stopped", Status.PAUSED: "Paused"}
 MENU = [("Show log", "log", "file-text"), ("Open folder", "folder", "folder-open"),
         ("Copy output path", "copy", "copy"), None,
         ("Resume / retry", "resume", "arrow-clockwise"),
-        ("Restart from scratch", "restart", "arrow-counter-clockwise"), ("Cancel", "cancel", "stop"), None,
+        ("Discard progress and restart", "restart", "arrow-counter-clockwise"),
+        ("Stop job · progress is kept", "cancel", "stop"), None,
         ("Move up", "up", "arrow-up"), ("Move down", "down", "arrow-down"), None,
         ("Remove", "remove", "trash")]
 TW, TH = 120, 68
@@ -72,10 +73,11 @@ class JobCard(QFrame):
         bottom = QHBoxLayout(); bottom.setSpacing(6)
         self.output = muted(QLabel()); self.metrics = muted(QLabel())
         self.resume_btn = self._quick("Resume", "resume", "arrow-clockwise")
+        self.pause_btn = self._quick("Pause", "pause", "pause")
         self.play_btn = self._quick("Play", "play", "play-fill")
         self.folder_btn = self._quick("Show in folder", "folder", "folder-open")
         bottom.addWidget(self.output, 1); bottom.addWidget(self.metrics)
-        for b in (self.resume_btn, self.play_btn, self.folder_btn):
+        for b in (self.pause_btn, self.resume_btn, self.play_btn, self.folder_btn):
             bottom.addWidget(b)
 
         body.addLayout(top); body.addWidget(self.track); body.addWidget(self.detail)
@@ -124,7 +126,7 @@ class JobCard(QFrame):
         st = job.status
         self.title.setText(clip(job.label, 70)); self.title.setToolTip(job.label)
         colors = {Status.QUEUED: theme.MUTED, Status.RUNNING: theme.ACCENT, Status.DONE: theme.OK,
-                  Status.FAILED: theme.DANGER, Status.CANCELLED: theme.WARN}
+                  Status.FAILED: theme.DANGER, Status.CANCELLED: theme.WARN, Status.PAUSED: theme.WARN}
         step = job.step
         self.status.setText(step.label if st == Status.RUNNING and step else STATUS_TEXT[st])
         self.status.setStyleSheet(f"color: {colors[st]}; font-weight: 600;")
@@ -160,4 +162,5 @@ class JobCard(QFrame):
         self.metrics.setVisible(bool(self.metrics.text()))
         self.play_btn.setVisible(st == Status.DONE)
         self.folder_btn.setVisible(st == Status.DONE)
-        self.resume_btn.setVisible(st in (Status.FAILED, Status.CANCELLED))
+        self.resume_btn.setVisible(st in (Status.FAILED, Status.CANCELLED, Status.PAUSED))
+        self.pause_btn.setVisible(st in (Status.RUNNING, Status.QUEUED) and job.kind != "preview")

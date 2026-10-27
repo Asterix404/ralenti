@@ -41,6 +41,7 @@ class Settings:
     ffmpeg_repo: str = ""
     rife_repo: str = ""
     sidebar_collapsed: bool = False
+    concurrency: str = "auto"
     last_version: str = ""
 
     @classmethod

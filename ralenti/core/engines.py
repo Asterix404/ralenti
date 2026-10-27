@@ -39,6 +39,7 @@ class Render:
     device: str
     opts: dict
     tmp: Path
+    limit: int | None = None   # output frames to produce (segmented rendering)
 
     @property
     def total(self) -> float:
@@ -54,6 +55,7 @@ class Engine:
     name = ""
     group = ""
     options: tuple = ()
+    supports_segments = False   # True if render() honours Render.limit
 
     def available(self, tc) -> bool:
         return False

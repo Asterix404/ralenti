@@ -221,3 +221,6 @@ def icon(name: str, tone: str = "muted", active: str | None = None, checked: str
     if name in PAINTED:
         return _painted2(name, tone, active, checked)
     return _icon_v81(name, tone, active, checked)
+
+
+ALIASES.update({"pause": ["ph.pause", "mdi6.pause", "mdi.pause"]})

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0 · 2026-10-28
+### New
+- **Pause and resume** any job instantly, from the queue bar or a job card. Nothing is lost.
+- Interpolation renders in parts: a stopped, interrupted or crashed job resumes from its last finished part.
+- **Run several jobs at once**: choose 1 to 4, or Auto, which adds jobs while your GPU has headroom and keeps them only if total speed improves.
+- When done: **Close Ralenti**.
+### Improved
+- Clearer queue controls: Start, Pause / Resume, and Stop (after the running jobs, or now with progress kept).
+- Audio is processed before the video, so the final step finishes sooner.
+
 ## 0.9.5 · 2026-10-27
 ### Improved
 - Update checks now test the full download and install flow.

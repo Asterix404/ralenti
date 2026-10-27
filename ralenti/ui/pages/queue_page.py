@@ -12,12 +12,14 @@ from ..icons import icon, pixmap
 from ..util import mono_font, notify, reveal
 from ..widgets.anim import SmoothBar
 from ..widgets.choice import RichCombo
+from ..widgets.segmented import Segmented
 from ..widgets.empty import EmptyState
 from ..widgets.fields import button, page_header
 from ..widgets.job_card import JobCard
 from ..winapi import shutdown_now, sleep_now
 
 WHEN_DONE = [("none", "Do nothing", "", "The PC stays on when the queue finishes."),
+             ("close", "Close Ralenti", "", "Quits Ralenti after the last job, with 15 seconds to cancel."),
              ("sleep", "Sleep", "", "Puts the PC to sleep after the last job, with 60 seconds to cancel."),
              ("shutdown", "Shut down", "Overnight",
               "Shuts the PC down after the last job, with 60 seconds to cancel.")]
@@ -52,7 +54,7 @@ class CountdownDialog(QDialog):
         self.action, self.left = action, seconds
         self.setWindowTitle("Ralenti"); self.setModal(True); self.setMinimumWidth(440)
         v = QVBoxLayout(self); v.setContentsMargins(24, 22, 24, 20); v.setSpacing(10)
-        ic = QLabel(); ic.setPixmap(pixmap("moon" if action == "sleep" else "power", 40, "accent"))
+        ic = QLabel(); ic.setPixmap(pixmap({"sleep": "moon", "close": "x-circle"}.get(action, "power"), 40, "accent"))
         self.title = QLabel(); self.title.setObjectName("Section")
         hint = QLabel("The queue has finished. Cancel if you're still using the PC.")
         hint.setObjectName("Hint"); hint.setWordWrap(True)
@@ -71,7 +73,7 @@ class CountdownDialog(QDialog):
             self._render()
 
     def _render(self):
-        verb = "Going to sleep" if self.action == "sleep" else "Shutting down"
+        verb = {"sleep": "Going to sleep", "close": "Closing Ralenti"}.get(self.action, "Shutting down")
         self.title.setText(f"{verb} in {self.left} s")
 
 
@@ -93,10 +95,23 @@ class QueuePage(QWidget):
             self.when.add(title, key, blurb, tag)
         whenbox.addWidget(lbl); whenbox.addWidget(self.when)
         self.start_btn = button("Start", qm.start, "accent", icon="play-fill")
-        self.stop_btn = button("Stop", lambda: qm.stop(), icon="stop")
+        self.pause_btn = button("Pause", self._pause_toggle, icon="pause")
+        self.stop_btn = button("Stop", lambda: None, icon="stop")
+        from ..widgets.queue_strip import stop_menu
+        self.stop_btn.setMenu(stop_menu(self, qm))
         clear = button("Clear finished", qm.clear_finished, "ghost", icon="broom")
         head.addLayout(whenbox)
-        for b in (self.start_btn, self.stop_btn, clear):
+        conc = QVBoxLayout(); conc.setSpacing(4)
+        clbl = QLabel("AT ONCE"); clbl.setObjectName("FieldLabel")
+        self.conc = Segmented([("Auto", "auto", "Measures speed and system load, and runs as many jobs at once as "
+                                "actually helps"), ("1", 1, ""), ("2", 2, ""), ("3", 3, ""), ("4", 4, "")])
+        self.conc.setFixedWidth(240)
+        _c = str(getattr(qm.settings, "concurrency", "auto") or "auto")
+        self.conc.set_value("auto" if _c == "auto" else int(_c))
+        self.conc.changed.connect(self._set_conc)
+        conc.addWidget(clbl); conc.addWidget(self.conc)
+        head.addLayout(conc)
+        for b in (self.start_btn, self.pause_btn, self.stop_btn, clear):
             head.addWidget(b, 0, Qt.AlignBottom)
         root.addLayout(head)
 
@@ -157,6 +172,10 @@ class QueuePage(QWidget):
         queued = any(j.status == Status.QUEUED for j in self.qm.jobs)
         self.start_btn.setEnabled(not running and queued)
         self.stop_btn.setEnabled(running)
+        self.pause_btn.setVisible(running)
+        _p = self.qm.all_paused
+        self.pause_btn.setText("Resume" if _p else "Pause")
+        self.pause_btn.setIcon(icon("play-fill" if _p else "pause", "text", checked=None))
         has = bool(self.cards)
         self.empty.setVisible(not has); self.scroll.setVisible(has)
         if running and not self.ticker.isActive():
@@ -200,10 +219,13 @@ class QueuePage(QWidget):
         if action == "none" or self.qm.user_stopped or any(j.status == Status.QUEUED for j in self.qm.jobs):
             return
         QApplication.alert(self.window())
-        if CountdownDialog(action, self).exec() == QDialog.Accepted:
+        if CountdownDialog(action, self, 15 if action == "close" else 60).exec() == QDialog.Accepted:
             self.when.setCurrentIndex(0)
             self.qm.save()
-            sleep_now() if action == "sleep" else shutdown_now(30)
+            if action == "close":
+                self.window().close()
+            else:
+                sleep_now() if action == "sleep" else shutdown_now(30)
         else:
             notify(self, "Cancelled · the PC stays on", "info")
 
@@ -223,6 +245,10 @@ class QueuePage(QWidget):
         elif key == "copy":
             QApplication.clipboard().setText(job.output)
             notify(self, "Output path copied", "ok")
+        elif key == "pause":
+            self.qm.pause(job_id)
+        elif key == "resume" and job.status == Status.PAUSED:
+            self.qm.resume(job_id)
         elif key in ("resume", "restart"):
             self.qm.retry(job_id, from_scratch=key == "restart")
             if not self.qm.is_running:
@@ -234,3 +260,20 @@ class QueuePage(QWidget):
         elif key == "remove" and not self.qm.remove(job_id):
             QMessageBox.information(self, "Ralenti", "Stop the job before removing it.")
         self._sync()
+
+
+
+def _pause_toggle(self) -> None:
+    self.qm.resume_all() if self.qm.all_paused else self.qm.pause_all()
+    self._sync()
+
+
+def _set_conc(self, v) -> None:
+    self.qm.settings.concurrency = str(v)
+    self.qm.settings.save()
+    self.qm.scaler.reset()
+    notify(self, "Ralenti will adjust how many jobs run at once" if v == "auto" else f"Up to {v} at once", "info")
+
+
+QueuePage._pause_toggle = _pause_toggle
+QueuePage._set_conc = _set_conc

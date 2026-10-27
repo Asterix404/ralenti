@@ -75,7 +75,7 @@ def write_bmp(path: Path, w: int, h: int, data: bytes) -> None:
 
 def run(ctl, exe: str, model: str, extract_cmd: list[str], encode_cmd: list[str], size: tuple[int, int],
         m: int, est_src: int, work: Path, uhd: bool = False, span=(0.0, 1.0), tta: bool = False,
-        cpu: bool = False) -> int:
+        cpu: bool = False, limit: int | None = None) -> int:
     """Decode -> RIFE (chunked, one-frame overlap) -> encoder. Returns frames written."""
     from .runner import DiskFull
     encode_cmd = adapt_cmd(encode_cmd)
@@ -88,7 +88,7 @@ def run(ctl, exe: str, model: str, extract_cmd: list[str], encode_cmd: list[str]
     logf = open(ctl.log_path, "ab")
     rd = en = None
     lo, hi = span
-    total, written, t0 = max(1, est_src * m), 0, time.time()
+    total, written, t0 = max(1, limit or est_src * m), 0, time.time()
     try:
         rd = subprocess.Popen(extract_cmd, stdout=subprocess.PIPE, stderr=logf, stdin=subprocess.DEVNULL,
                               creationflags=NO_WINDOW)
@@ -140,6 +140,9 @@ def run(ctl, exe: str, model: str, extract_cmd: list[str], encode_cmd: list[str]
                 raise RuntimeError(f"RIFE failed (code {p.returncode}, {len(files)} of {outs} frames). Your GPU "
                                    "may be out of memory: try a lower processing resolution. See the log.")
             keep = m if single else (outs if final else (k - 1) * m)
+            if limit is not None:
+                keep = max(0, min(keep, limit - written))
+                final = final or written + keep >= limit
             for f in files[:keep]:
                 try:
                     en.stdin.write(f.read_bytes())
@@ -169,6 +172,7 @@ class RifeEngine(Engine):
     key = "rife"
     name = "RIFE"
     group = "RIFE · free & open source"
+    supports_segments = True
     options = (Option("tta", "Quality boost", (("Off", False, "Normal speed"),
                                                ("On", True, "Extra passes per frame: slightly cleaner, much slower")),
                       False, "Runs each frame through extra passes (test-time augmentation) for slightly cleaner "
@@ -210,4 +214,5 @@ class RifeEngine(Engine):
         ctl.job.detail = f"RIFE · {m}x frames → {enc.label}"
         run(ctl, tc.rife, path, ext, build_frames_encode(tc, r.info, enc, out, rate, r.target, q), size, m,
             round(r.dur * float(src)), r.tmp / "rife", uhd=size[1] > 1440, span=span,
-            tta=bool(r.opts.get("tta")), cpu=r.device == "-1")
+            tta=bool(r.opts.get("tta")), cpu=r.device == "-1",
+            limit=round(r.limit * float(rate / (r.target or src))) if r.limit else None)

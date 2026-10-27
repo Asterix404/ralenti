@@ -460,3 +460,111 @@ def work_units(job: Job) -> float:
     except (KeyError, ValueError, TypeError, ZeroDivisionError):
         pass
     return 0.0
+
+
+
+# ===================== 0.10.0: segmented rendering (resume, pause, live output) =====================
+import math  # noqa: E402
+from dataclasses import replace as _replace  # noqa: E402
+
+from .commands import _head  # noqa: E402
+
+SEG_SECONDS = 10
+
+
+def plan_segments(total: int, seg: int) -> list[list[int]]:
+    """Source-frame ranges [a, b) relative to the clip start."""
+    return [[a, min(a + seg, total)] for a in range(0, max(1, total), seg)]
+
+
+def segment_limits(segs, ratio: Fraction) -> list[int]:
+    """Output frames per segment; cumulative rounding so the total is exact."""
+    return [int(math.floor(b * ratio) - math.floor(a * ratio)) for a, b in segs]
+
+
+_make_interpolate_job_v09 = make_interpolate_job
+
+
+def make_interpolate_job(tc, settings, src, **opts):
+    job = _make_interpolate_job_v09(tc, settings, src, **opts)
+    eng = engine_for(job.spec["model"])
+    job.plan["segmented"] = bool(getattr(eng, "supports_segments", False))
+    audio = next((s for s in job.steps if s.kind == "audio"), None)
+    if audio:                                   # audio first: the video can be muxed as soon as it's done
+        job.steps.remove(audio)
+        job.steps.insert(1, audio)
+    return job
+
+
+_analyze_v09 = _analyze
+
+
+def _analyze_seg(job, tc, ctl):
+    _analyze_v09(job, tc, ctl)
+    p, s, st = job.plan, job.spec, job.state
+    if job.kind != "interpolate" or not p.get("segmented") or st.get("segments"):
+        return
+    info = info_from_dict(p["info"])
+    src = info.fps or Fraction(30)
+    start, dur = _trim(s)
+    dur = dur or max(0.0, info.duration - (start or 0))
+    total = max(1, int(round(dur * float(src))))
+    st["segments"] = plan_segments(total, max(60, int(round(SEG_SECONDS * float(src)))))
+    target = Fraction(st["fps"]) if st.get("fps") else src
+    st["ratio"] = str(target * Fraction(s["slowmo"]).limit_denominator(100) / src)
+    st["seg_done"] = []
+
+
+_interpolate_whole = _interpolate
+
+
+def _interpolate_seg(job, tc, ctl):
+    p, s, st = job.plan, job.spec, job.state
+    if not p.get("segmented") or not st.get("segments"):
+        return _interpolate_whole(job, tc, ctl)
+    eng, r0 = _render_args(job, tc)
+    if p["two_pass"]:
+        enc, out, q = ENCODERS[p["intermediate_enc"]], p["intermediate"], None
+    elif p["audio_step"]:
+        enc, out, q = ENCODERS[s["encoder"]], p["video_tmp"], s.get("q")
+    else:
+        enc, out, q = ENCODERS[s["encoder"]], p["part"], s.get("q")
+    seg_dir = Path(p["tmp"]) / "seg"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    segs, ratio = st["segments"], Fraction(st["ratio"])
+    limits = segment_limits(segs, ratio)
+    src = float(r0.info.fps or 30)
+    clip0 = r0.start or 0.0
+    done = set(st.get("seg_done") or [])
+    n = len(segs)
+    for i, ((a, b), lim) in enumerate(zip(segs, limits)):
+        f = seg_dir / f"{i:05d}.mkv"
+        if lim <= 0 or (i in done and f.exists() and f.stat().st_size > 0):
+            done.add(i)
+            continue
+        ctl.check()
+        count = (b - a) + (0 if i == n - 1 else 1)        # one extra frame: in-betweens into the next part
+        r = _replace(r0, start=(clip0 + max(0.0, a - 0.25) / src) or None, dur=count / src, limit=lim,
+                     tmp=Path(p["tmp"]) / "work")
+        tmp_out = seg_dir / f"{i:05d}.part.mkv"
+        ctl.job.detail = f"{eng.name} · part {i + 1} of {n}"
+        eng.render(r, tc, ctl, enc, str(tmp_out), q, span=(i / n, (i + 1) / n))
+        os.replace(tmp_out, f)
+        done.add(i)
+        st["seg_done"] = sorted(done)
+        ctl.checkpoint()
+    files = [str(seg_dir / f"{i:05d}.mkv") for i in range(n) if (seg_dir / f"{i:05d}.mkv").exists()]
+    lst = write_concat_list(files, seg_dir / "list.txt")
+    cmd = _head(tc.ffmpeg) + ["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v:0", "-c", "copy"]
+    if Path(out).suffix.lower() in (".mp4", ".mov"):
+        if enc.mp4_tag:
+            cmd += ["-tag:v", enc.mp4_tag]
+        cmd += ["-movflags", "+faststart"]
+    ctl.job.detail = f"Joining {len(files)} parts"
+    ctl.run_ffmpeg(cmd + [out], 0)
+    st["joined"] = out
+    shutil.rmtree(seg_dir, ignore_errors=True)
+
+
+HANDLERS["analyze"] = _analyze_seg
+HANDLERS["interpolate"] = _interpolate_seg
