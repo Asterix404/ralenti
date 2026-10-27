@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.5 · 2026-10-27
+### Improved
+- Update checks now test the full download and install flow.
+
 ## 0.9.4 · 2026-10-27
 ### New
 - **In-app updates**: Ralenti downloads the update, closes, installs it and reopens by itself. Settings, presets, queue and extensions are kept.
