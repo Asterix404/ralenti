@@ -15,6 +15,7 @@ from .pages.settings_page import SettingsPage
 from .pages.trim_page import TrimPage
 from .pages.about_page import AboutPage
 from .pages.downloads_page import DownloadsPage
+from .pages.live_page import LivePage
 from .util import clip, resource
 from .widgets.anim import AnimatedStack, Toast
 from .widgets.drop_zone import paths_from_mime
@@ -23,7 +24,7 @@ from .widgets.gpu_meter import GpuMeter
 from .winapi import TaskbarProgress
 
 NAV = [("Interpolate", "sparkle"), ("Trim", "scissors"), ("Merge", "stack"),
-       ("Encode", "gauge"), ("Queue", "list-checks"), ("Downloads", "download"), ("Settings", "gear-six"), ("About", "info")]
+       ("Encode", "gauge"), ("Queue", "list-checks"), ("Live", "eye"), ("Downloads", "download"), ("Settings", "gear-six"), ("About", "info")]
 DROP_TEXT = {0: "Drop to add to Interpolate", 1: "Drop to open in Trim",
              2: "Drop to add to Merge", 3: "Drop to add to Encode"}
 DRAG_EVENTS = (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop, QEvent.DragLeave)
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
         self.queue_page = QueuePage(qm, self.bridge)
         self.settings_page = SettingsPage(qm, settings)
         self.downloads_page = DownloadsPage(qm, settings)
+        self.live_page = LivePage(qm, settings)
         for pg in (self.interp, self.merge_page, self.encode_page):
             self.settings_page.saved.connect(pg.reload_options)
         self.queue_page.add_requested.connect(lambda: (self.go(0), self.interp.browse()))
@@ -73,7 +75,7 @@ class MainWindow(QMainWindow):
         from .downloads import downloads
         downloads(settings).finished.connect(self._tools_changed)
         pages = [self.interp, self.trim_page, self.merge_page, self.encode_page,
-                 self.queue_page, self.downloads_page, self.settings_page, AboutPage(qm, settings)]
+                 self.queue_page, self.live_page, self.downloads_page, self.settings_page, AboutPage(qm, settings)]
         self.queue_index = 4
 
         root = QWidget(); root.setObjectName("Root")
@@ -481,3 +483,12 @@ def _whats_new(self) -> None:
 
 MainWindow.check_updates = _check_updates_v094
 MainWindow._whats_new = _whats_new
+
+
+
+def _show_live(self, jid) -> None:
+    self.go([n for n, _ in NAV].index("Live"))
+    self.live_page.watch(jid)
+
+
+MainWindow.show_live = _show_live

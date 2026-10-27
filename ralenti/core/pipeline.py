@@ -563,8 +563,29 @@ def _interpolate_seg(job, tc, ctl):
     ctl.job.detail = f"Joining {len(files)} parts"
     ctl.run_ffmpeg(cmd + [out], 0)
     st["joined"] = out
-    shutil.rmtree(seg_dir, ignore_errors=True)
 
 
 HANDLERS["analyze"] = _analyze_seg
 HANDLERS["interpolate"] = _interpolate_seg
+
+
+
+# ===================== 0.11.1: never delete files a live viewer is playing =====================
+import time as _time  # noqa: E402
+
+_cleanup_v0110 = cleanup_temp
+
+
+def cleanup_temp(job, remove_part: bool = False) -> None:
+    tmp = job.plan.get("tmp")
+    if tmp:
+        m = Path(tmp) / ".live"
+        try:
+            live = m.exists() and _time.time() - m.stat().st_mtime < 10
+        except OSError:
+            live = False
+        if live:                                   # the viewer cleans up when it lets go
+            if remove_part and (part := job.plan.get("part")):
+                Path(part).unlink(missing_ok=True)
+            return
+    _cleanup_v0110(job, remove_part)

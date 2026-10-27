@@ -623,3 +623,27 @@ class QueueManager:
             self._save_rates()
             self.save()
             self._emit("finished", job)
+
+
+
+# ===================== 0.11.1: remove leftover temp folders at startup =====================
+_load_v0100 = QueueManager.load
+
+
+def _load_v0111(self) -> None:
+    import re as _re
+    import shutil as _sh
+    _load_v0100(self)
+    keep = {j.id for j in self.jobs if j.status != Status.DONE}
+    root = Path(self.settings.temp_dir or TEMP_DIR)
+    try:
+        dirs = list(root.iterdir())
+    except OSError:
+        return
+    for d in dirs:
+        if d.is_dir() and _re.fullmatch(r"[0-9a-f]{10}", d.name) and d.name not in keep:
+            _sh.rmtree(d, ignore_errors=True)
+    _sh.rmtree(root / "live", ignore_errors=True)
+
+
+QueueManager.load = _load_v0111

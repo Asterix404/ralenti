@@ -221,7 +221,9 @@ class PlayerPanel(QWidget):
         for b in (self.key_btns[0], tb("caret-left", "Previous frame (←)", lambda: self.step(-1)),
                   self.play_btn, tb("caret-right", "Next frame (→)", lambda: self.step(1)), self.key_btns[1]):
             row.addWidget(b)
-        row.addSpacing(10); row.addWidget(self.time); row.addStretch(1)
+        from .timeline import zoom_controls
+        row.addSpacing(10); row.addWidget(self.time); row.addSpacing(8)
+        row.addWidget(zoom_controls(self.timeline)); row.addStretch(1)
         self.range_btns = []
         if show_range:
             self.range_btns = [tb("mark-in", "Set in point (I)", self.set_in),

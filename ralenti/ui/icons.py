@@ -228,3 +228,11 @@ ALIASES.update({"pause": ["ph.pause", "mdi6.pause", "mdi.pause"]})
 
 ALIASES.update({"eye": ["ph.eye", "mdi6.eye", "mdi.eye"],
                 "hourglass": ["ph.hourglass", "mdi6.timer-sand", "mdi.timer-sand"]})
+
+
+ALIASES.update({
+    "zoom-in": ["ph.magnifying-glass-plus", "mdi6.magnify-plus-outline", "mdi.magnify-plus-outline", "ph.plus"],
+    "zoom-out": ["ph.magnifying-glass-minus", "mdi6.magnify-minus-outline", "mdi.magnify-minus-outline", "ph.minus"],
+    "zoom-fit": ["ph.arrows-out-line-horizontal", "mdi6.arrow-expand-horizontal", "mdi.arrow-expand-horizontal",
+                 "ph.arrows-out"],
+})

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.1 · 2026-10-28
+### New
+- **Live page**: watch an interpolation job while it renders, with sound. A part grid shows what's ready; click any ready part, or anywhere on the timeline, to jump there.
+- **Zoomable timelines** in every player: scroll to zoom, right-drag or Shift+scroll to move, with a time ruler and an overview bar.
+### Improved
+- Live playback plays one ready-made file (rendered parts plus sound, joined by FFmpeg) that grows as the job renders, so seeking is instant and sound always matches the picture.
+- "Open in external player" opens what's rendered so far as one file, with sound.
+### Fixed
+- Part files were deleted while the live player was still playing them.
+- Live playback could freeze and repeat the same moment after a seek or a part change.
+- Leftover temporary files are cleaned up when Ralenti starts.
+
 ## 0.11.0 · 2026-10-28
 ### New
 - **Watch live**: see an interpolation job while it renders, in Ralenti or in your own player.
