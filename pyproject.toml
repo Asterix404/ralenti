@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ralenti"
+version = "0.9.0"
+description = "Motion & encoding studio: AI frame interpolation, VMAF encoding and lossless tools"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = ["PySide6>=6.7", "qtawesome>=1.3", "psutil>=5.9"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pyinstaller"]
+
+[project.gui-scripts]
+ralenti = "ralenti.app:main"
+
+[tool.setuptools.packages.find]
+include = ["ralenti*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[project.urls]
+Homepage = "https://github.com/Asterix404/ralenti"
+Issues = "https://github.com/Asterix404/ralenti/issues"

@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.repository == 'Asterix404/ralenti'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Test
+        run: pytest -q
+
+      - name: Check version matches tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          $ver = python -c "import ralenti; print(ralenti.__version__)"
+          if ($tag -ne $ver) { throw "Tag $tag does not match ralenti.__version__ $ver" }
+          "VER=$ver" >> $env:GITHUB_ENV
+
+      - name: Build app
+        run: pyinstaller --noconfirm --clean ralenti.spec
+
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md dist\Ralenti\
+          Compress-Archive -Path dist\Ralenti -DestinationPath "dist\Ralenti-$env:VER-portable.zip"
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DAppVersion=$env:VER" installer\ralenti.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Ralenti-*-setup.exe
+            dist/Ralenti-*-portable.zip
+          generate_release_notes: true
