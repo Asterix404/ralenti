@@ -91,3 +91,6 @@ class StepTrack(QWidget):
             p.drawLine(QPointF(c.x() - 2.6, c.y() + 2.6), QPointF(c.x() + 2.6, c.y() - 2.6))
         else:
             p.setPen(QPen(QColor(theme.FAINT), 1.3)); p.setBrush(Qt.NoBrush); p.drawEllipse(c, 3.2, 3.2)
+
+
+SHORT.update({"join": "Join", "render": "Render", "remux": "Copy"})

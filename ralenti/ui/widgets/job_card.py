@@ -167,3 +167,6 @@ class JobCard(QFrame):
         self.pause_btn.setVisible(st in (Status.RUNNING, Status.QUEUED) and job.kind != "preview")
         self.live_btn.setVisible(job.kind == "interpolate" and bool(job.plan.get("segmented"))
                                  and st in (Status.RUNNING, Status.PAUSED))
+
+
+KIND.update({"edit": "Edit"})

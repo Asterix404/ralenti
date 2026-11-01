@@ -647,3 +647,173 @@ def _analyze_v012(job, tc, ctl):
 
 
 HANDLERS["analyze"] = _analyze_v012
+
+
+
+# ===================== editor: edit jobs, transforms, audio options, joining clips =====================
+from .commands import _seek, _video_out  # noqa: E402
+from .transform import output_size as _out_size, transform_filter as _tfilter, video_chain as _vchain  # noqa: E402
+
+_render_args_v012 = _render_args
+
+
+def _render_args(job, tc):
+    eng, r = _render_args_v012(job, tc)
+    r.transform = job.state.get("transform") or ""
+    return eng, r
+
+
+_analyze_v012b = HANDLERS["analyze"]
+
+
+def _analyze_e1(job, tc, ctl):
+    _analyze_v012b(job, tc, ctl)
+    s, st = job.spec, job.state
+    tr = s.get("transform") or {}
+    rot, hf, vf = int(tr.get("rotate") or 0) % 360, bool(tr.get("hflip")), bool(tr.get("vflip"))
+    max_h = int(s.get("max_h") or 0)
+    if not (rot or hf or vf or max_h):
+        return
+    info = info_from_dict(job.plan["info"])
+    crop = st.get("crop")
+    bw, bh = (crop[0], crop[1]) if crop else (info.width, info.height)
+    w, h = _out_size(bw, bh, rot, float(s.get("scale") or 1), max_h)
+    st["transform"] = _tfilter(rot, hf, vf)
+    st["size"] = [w, h] if (w, h) != (bw, bh) else None
+
+
+_audio_v012 = HANDLERS["audio"]
+
+
+def _audio_e1(job, tc, ctl):
+    a = job.plan.get("audio_out")
+    if not a:
+        return _audio_v012(job, tc, ctl)
+    p, s = job.plan, job.spec
+    info = info_from_dict(p["info"])
+    start, dur = _trim(s)
+    cmd = _head(tc.ffmpeg) + _seek(start, dur) + ["-i", info.path, "-map", "0:a:0", "-vn", "-sn", "-dn"]
+    if a["mode"] == "copy":
+        cmd += ["-c:a", "copy"]
+    else:
+        if a.get("filter"):
+            cmd += ["-af", a["filter"]]
+        cmd += list(a["args"])
+    ctl.job.detail = a.get("label", "Audio")
+    ctl.run_ffmpeg(cmd + [p["audio_tmp"]], (dur or info.duration - (start or 0)) * float(s.get("slowmo") or 1))
+
+
+def _join(job, tc, ctl):
+    p = job.plan
+    clips, tmp = p["clips"], Path(p["tmp"])
+    tmp.mkdir(parents=True, exist_ok=True)
+    out, part = tmp / "joined.mkv", tmp / "joined.part.mkv"
+    infos = [probe(tc.ffprobe, c) for c in clips]
+    total = sum(i.duration for i in infos)
+    if p.get("join_lossless"):
+        lst = write_concat_list(clips, tmp / "join.txt")
+        cmd = _head(tc.ffmpeg) + ["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v:0", "-map", "0:a:0?",
+                                  "-c", "copy", str(part)]
+        ctl.job.detail = f"Joining {len(clips)} clips (lossless)"
+    else:
+        target = pick_target(infos, "first")
+        cmd = build_merge_reencode(tc, infos, target, ENCODERS[p.get("join_enc") or "ffv1"], str(part))
+        ctl.job.detail = f"Joining {len(clips)} clips · converting to {target.width}×{target.height}"
+    ctl.run_ffmpeg(cmd, total)
+    os.replace(part, out)
+    info = probe(tc.ffprobe, str(out))
+    if not info.width:
+        raise RuntimeError("The joined video couldn't be read. See the log.")
+    p["info"] = info_to_dict(info)
+
+
+def _remux(job, tc, ctl):
+    p, s = job.plan, job.spec
+    info = info_from_dict(p["info"])
+    start, dur = _trim(s)
+    a = p.get("audio_out") or {"mode": "drop"}
+    cmd = _head(tc.ffmpeg) + _seek(start, dur) + ["-i", info.path, "-map", "0:v:0"]
+    if a["mode"] == "drop" or not info.has_audio:
+        cmd += ["-an"]
+    elif a["mode"] == "copy":
+        cmd += ["-map", "0:a:0", "-c:a", "copy"]
+    else:
+        cmd += ["-map", "0:a:0"] + list(a["args"])
+    cmd += ["-c:v", "copy", "-avoid_negative_ts", "make_zero", "-map_metadata", "0"]
+    if Path(p["part"]).suffix.lower() in (".mp4", ".mov"):
+        cmd += ["-movflags", "+faststart"]
+    ctl.job.detail = "Copying the video, no re-encode"
+    ctl.run_ffmpeg(cmd + [p["part"]], dur or max(0.0, info.duration - (start or 0)))
+
+
+def _render_edit(job, tc, ctl):
+    p, s, st = job.plan, job.spec, job.state
+    info = info_from_dict(p["info"])
+    start, dur = _trim(s)
+    if p.get("vmaf_ref"):
+        enc, out, q = ENCODERS[p["intermediate_enc"]], p["intermediate"], None
+    elif p["audio_step"]:
+        enc, out, q = ENCODERS[s["encoder"]], p["video_tmp"], s.get("q")
+    else:
+        enc, out, q = ENCODERS[s["encoder"]], p["part"], s.get("q")
+    chain = _vchain(st)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    cmd = _head(tc.binary_for(enc.codec) or tc.ffmpeg) + _seek(start, dur) + ["-i", info.path, "-map", "0:v:0",
+                                                                             "-an", "-sn"]
+    if chain:
+        cmd += ["-vf", ",".join(chain)]
+    ctl.job.detail = enc.label
+    ctl.run_ffmpeg(cmd + _video_out(enc, q, info, out), dur or max(0.0, info.duration - (start or 0)))
+
+
+_vmaf_v012 = HANDLERS["vmaf_search"]
+
+
+def _vmaf_e1(job, tc, ctl):
+    if job.kind != "edit":
+        return _vmaf_v012(job, tc, ctl)
+    s = job.spec
+    src = s.get("src")
+    s["src"] = job.plan.get("vmaf_ref") or info_from_dict(job.plan["info"]).path
+    try:
+        _vmaf_v012(job, tc, ctl)
+    finally:
+        s["src"] = src
+
+
+_encode_v012 = HANDLERS["encode"]
+
+
+def _encode_e1(job, tc, ctl):
+    if job.kind != "edit":
+        return _encode_v012(job, tc, ctl)
+    p, s, st = job.plan, job.spec, job.state
+    enc, info = ENCODERS[s["encoder"]], info_from_dict(p["info"])
+    src = p.get("vmaf_ref") or info.path
+    out = p["video_tmp"] if p["audio_step"] else p["part"]
+    q = st.get("q", s.get("q"))
+    ctl.job.detail = f"{enc.label} · q={q if q is not None else enc.q_default}"
+    ctl.run_ffmpeg(build_encode(tc, src, info, enc, out, q=q), probe(tc.ffprobe, src).duration)
+
+
+_work_units_v012 = work_units
+
+
+def work_units(job):
+    if job.kind != "edit":
+        return _work_units_v012(job)
+    p, s, st = job.plan, job.spec, job.state
+    try:
+        info = info_from_dict(p["info"])
+        start, dur = _trim(s)
+        secs = dur or max(0.0, info.duration - (start or 0))
+        if p.get("remux"):
+            return secs / 60
+        w, h = st.get("size") or (info.width, info.height)
+        return secs * float(info.fps or 30) * w * h / 1e6 / 1000
+    except (KeyError, ValueError, TypeError, ZeroDivisionError):
+        return 0.0
+
+
+HANDLERS.update(analyze=_analyze_e1, audio=_audio_e1, join=_join, remux=_remux, render=_render_edit,
+                vmaf_search=_vmaf_e1, encode=_encode_e1)

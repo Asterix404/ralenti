@@ -211,6 +211,11 @@ class RifeEngine(Engine):
         src = r.info.fps or Fraction(30)
         m, rate = plan(src, r.target or src, r.slowmo)
         ext, size = rife_extract_cmd(tc, r.info, r.start, r.dur, r.crop, r.size)
+        if getattr(r, "transform", ""):
+            vi = ext.index("-vf")
+            vf = ext[vi + 1]
+            k = vf.find("scale=w=")
+            ext[vi + 1] = (vf[:k] + r.transform + "," + vf[k:]) if k >= 0 else (vf + "," + r.transform)
         if getattr(r, "hold_end", False):
             vi = ext.index("-vf")
             ext[vi + 1] += ",tpad=stop_mode=clone:stop=1"

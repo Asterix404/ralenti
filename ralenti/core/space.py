@@ -70,3 +70,27 @@ def shortfalls(jobs: list[Job]) -> list[tuple[str, int, int]]:
         if need * MARGIN + RESERVE > free:
             res.append((d, int(need), int(free)))
     return res
+
+
+
+# ===================== editor: size estimates for edit jobs =====================
+_estimate_v012 = estimate
+
+
+def estimate(job):
+    if job.kind != "edit" and not job.plan.get("join"):
+        return _estimate_v012(job)
+    p, s = job.plan, job.spec
+    td = drive(p.get("tmp") or job.output)
+    joined = sum(_size(c) for c in p.get("clips") or []) if p.get("join") else 0
+    if job.kind != "edit":
+        out, tmp, td = _estimate_v012(job)
+        return out, tmp + joined, td
+    if p.get("remux"):
+        return (joined or _size(s.get("src"))), joined, td
+    pf = work_units(job) * 1e9
+    out = pf * BPP.get(s.get("encoder"), 0.03)
+    tmp = joined + (pf * BPP.get(p.get("intermediate_enc"), 0.4) if p.get("vmaf_ref") else 0)
+    if p.get("audio_step"):
+        tmp += out
+    return int(out), int(tmp), td

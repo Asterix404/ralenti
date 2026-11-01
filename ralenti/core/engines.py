@@ -41,6 +41,7 @@ class Render:
     tmp: Path
     limit: int | None = None   # output frames to produce (segmented rendering)
     hold_end: bool = False     # the part ends at a scene cut: repeat its last frame instead of the next one
+    transform: str = ""        # rotate/flip filters, applied after the crop and before scaling
 
     @property
     def total(self) -> float:
