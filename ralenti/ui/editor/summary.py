@@ -1,4 +1,5 @@
-"""What the summary shows: one line per step, warnings and the time estimate."""
+"""What the summary shows: one line per step, warnings, the estimate and the output file name."""
+from datetime import datetime
 from pathlib import Path
 
 from ...core.audio_out import plan_audio
@@ -7,6 +8,7 @@ from ...core.encoders import ENCODERS
 from ...core.engines import all_models, resolve_model
 from ...core.estimate import describe, estimate
 from ...core.fps import target_fps
+from ...core.naming import render, resolve
 from ...core.segments import kept_ranges
 from ...core.transform import output_size
 from ..util import fmt_ts
@@ -44,10 +46,32 @@ def analyse(session):
     fps = target_fps(info.fps, m.get("fps_mode") or "keep", m.get("fps_value") or 2.0) if motion else info.fps
     vmaf = v.get("vmaf") if (enc and enc.has_quality and tc.has_vmaf and not copy) else None
     aplan = plan_audio(e.audio, info, ext, slow, tc, enc.key if enc and not copy else "")
-    return dict(info=info, ranges=ranges, start=None, end=d, dur=d, out_dur=d * slow, crop=crop, rot=rot, hf=hf,
-                vf=vf, filters=filters, motion=motion, slow=slow, copy=copy, multi=multi, enc=enc, ext=ext,
+    return dict(info=info, ranges=ranges, dur=d, out_dur=d * slow, crop=crop, rot=rot, hf=hf, vf=vf,
+                filters=filters, motion=motion, slow=slow, copy=copy, multi=multi, enc=enc, ext=ext,
                 ext_warn=ext_warn, size=size, fps=fps or info.fps, vmaf=vmaf, aplan=aplan,
                 model=resolve_model(tc, m.get("model")) if motion else None)
+
+
+def name_context(session, an) -> dict:
+    e, enc, (w, h), now = session.edit, an["enc"], an["size"], datetime.now()
+    f = float(an["fps"] or 0)
+    return {"name": Path(e.clips[0]).stem, "model": an["model"] or "none", "slowmo": f"{an['slow']:g}",
+            "fps": f"{f:.3f}".rstrip("0").rstrip("."), "res": f"{w}x{h}",
+            "encoder": "copy" if an["copy"] else (enc.key if enc else ""),
+            "vmaf": f"{an['vmaf']:g}" if an["vmaf"] else "cq", "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H-%M")}
+
+
+def preview_output(session, an) -> Path:
+    e, o = session.edit, session.edit.output
+    src = Path(e.clips[0])
+    folder = Path(o.get("out_dir") or src.parent)
+    tpl = (o.get("name") or "").strip()
+    base = render(tpl, name_context(session, an)) if tpl else ""
+    if not base:
+        base = (src.stem + "_ralenti" + (f"_{an['model']}" if an["motion"] else "")
+                + (f"_slow{an['slow']:g}x" if an["slow"] != 1 else "") + (f"_vmaf{an['vmaf']:g}" if an["vmaf"] else ""))
+    return resolve(folder, base, an["ext"], o.get("exists") == "overwrite")
 
 
 def rows(session, an) -> dict:
@@ -88,9 +112,9 @@ def rows(session, an) -> dict:
     else:
         out["motion"] = ("Off · no AI", False)
     out["audio"] = (an["aplan"]["label"], True)
-    enc, v, o = an["enc"], e.encode, e.output
+    enc, v = an["enc"], e.encode
     if an["copy"]:
-        out["output"] = (f"<b>Copy</b> · no re-encode, lossless · {an['ext']}", True)
+        out["encode"] = ("<b>Copy</b> · no re-encode, lossless", True)
     elif enc:
         if an["vmaf"]:
             q = f"VMAF {an['vmaf']:g}, sample tested"
@@ -98,10 +122,11 @@ def rows(session, an) -> dict:
             q = f"constant quality, {enc.q_flag.upper()} {v.get('q') if v.get('q') is not None else enc.q_default}"
         else:
             q = "fixed profile"
-        where = o.get("out_dir") or "next to the source"
-        out["output"] = (f"<b>{enc.label}</b> · {q} · {an['ext']} · saved {where}", True)
+        out["encode"] = (f"<b>{enc.label}</b> · {q}", True)
     else:
-        out["output"] = ("Pick an encoder", True)
+        out["encode"] = ("Pick an encoder", True)
+    p = preview_output(session, an)
+    out["output"] = (f"<b>{p.name}</b> · in {p.parent.name or p.parent}", True)
     return out
 
 

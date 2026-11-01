@@ -247,6 +247,12 @@ QFrame#SumStep {{ background: transparent; border-radius: 8px; }}
 QFrame#SumStep:hover {{ background: {SURFACE2}; }}
 QFrame#SumStep QLabel {{ background: transparent; }}
 QFrame#SumStep[off="true"] QLabel#SumValue {{ color: {FAINT}; }}
+QFrame#SegRow {{ background: {SURFACE2}; border: 1px solid {BORDER}; border-radius: 8px; }}
+QFrame#SegRow[removed="true"] {{ background: transparent; border-style: dashed; }}
+QFrame#SegRow QLabel, QFrame#SegRow QCheckBox {{ background: transparent; }}
+QPushButton#Chip {{ padding: 3px 6px; border-radius: 7px; font-family: Consolas; font-size: 8.5pt; }}
+QLabel#NamePreview {{ background: {SURFACE2}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px 10px;
+    font-family: Consolas; }}
 """
 
 

@@ -14,13 +14,9 @@ from .editor.page import EditorPage
 from .icons import icon, pixmap
 from .pages.about_page import AboutPage
 from .pages.downloads_page import DownloadsPage
-from .pages.encode_page import EncodePage
-from .pages.interpolate_page import InterpolatePage
 from .pages.live_page import LivePage
-from .pages.merge_page import MergePage
 from .pages.queue_page import QueuePage
 from .pages.settings_page import SettingsPage
-from .pages.trim_page import TrimPage
 from .util import clip, resource
 from .widgets.anim import AnimatedStack, Toast
 from .widgets.drop_zone import paths_from_mime
@@ -31,16 +27,14 @@ from .winapi import TaskbarProgress
 NAV = [  # key, label, icon, group
     ("trim", "Trim", "scissors", "edit"), ("crop", "Transform", "crop", "edit"),
     ("motion", "Interpolation", "sparkle", "edit"), ("audio", "Audio", "speaker-high", "edit"),
-    ("output", "Output", "export", "edit"),
-    ("old_interp", "Interpolate", "sparkle", "classic"), ("old_trim", "Trim", "scissors", "classic"),
-    ("old_merge", "Merge", "stack", "classic"), ("old_encode", "Encode", "gauge", "classic"),
+    ("encode", "Encode", "gauge", "edit"), ("output", "Output", "export", "edit"),
     ("queue", "Queue", "list-checks", "app"), ("live", "Live", "eye", "app"),
     ("downloads", "Downloads", "download", "app"), ("settings", "Settings", "gear-six", "app"),
     ("about", "About", "info", "app"),
 ]
 KEYS = [n[0] for n in NAV]
-EDIT_STEPS = {"trim", "crop", "motion", "audio", "output"}
-GROUPS = [("edit", "EDIT"), ("classic", "CLASSIC · REMOVED SOON"), ("app", "APP")]
+EDIT_STEPS = {"trim", "crop", "motion", "audio", "encode", "output"}
+GROUPS = [("edit", "EDIT"), ("app", "APP")]
 DRAG_EVENTS = (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop, QEvent.DragLeave)
 SIDE_W, SIDE_MIN = 232, 72
 
@@ -98,13 +92,10 @@ class MainWindow(QMainWindow):
         self.live_page = LivePage(qm, settings)
         self.downloads_page = DownloadsPage(qm, settings)
         self.settings_page = SettingsPage(qm, settings)
-        self.pages = {"editor": self.editor, "old_interp": InterpolatePage(qm, settings),
-                      "old_trim": TrimPage(qm, settings), "old_merge": MergePage(qm, settings),
-                      "old_encode": EncodePage(qm, settings), "queue": self.queue_page, "live": self.live_page,
+        self.pages = {"editor": self.editor, "queue": self.queue_page, "live": self.live_page,
                       "downloads": self.downloads_page, "settings": self.settings_page,
                       "about": AboutPage(qm, settings)}
-        for k in ("editor", "old_interp", "old_merge", "old_encode"):
-            self.settings_page.saved.connect(self.pages[k].reload_options)
+        self.settings_page.saved.connect(self.editor.reload_options)
         self.queue_page.add_requested.connect(lambda: (self.go("motion"), self.editor.browse()))
         self.settings_page.setup_requested.connect(self.run_setup)
         self.settings_page.open_downloads.connect(self.go_downloads)
@@ -276,22 +267,14 @@ class MainWindow(QMainWindow):
         return True
 
     def _show_overlay(self) -> None:
-        names = {"old_interp": "Drop to open in Interpolate", "old_trim": "Drop to open in Trim",
-                 "old_merge": "Drop to add to Merge", "old_encode": "Drop to add to Encode"}
-        self.overlay.title.setText(names.get(self._cur, "Drop to add clips to your video"))
+        self.overlay.title.setText("Drop to add clips to your video")
         self.overlay.setGeometry(self.centralWidget().geometry().adjusted(14, 14, -14, -14))
         self.overlay.raise_(); self.overlay.show()
 
     def _route(self, paths) -> None:
-        k = self._cur
-        if k in ("old_interp", "old_merge", "old_encode"):
-            self.pages[k].add_files(paths)
-        elif k == "old_trim":
-            self.pages[k].open(paths[0])
-        else:
-            if k not in EDIT_STEPS:
-                self.go("motion")
-            self.editor.add_files(paths)
+        if self._cur not in EDIT_STEPS:
+            self.go("motion")
+        self.editor.add_files(paths)
 
     # ---------- toasts ----------
     def toast(self, text: str, kind: str = "info") -> None:
@@ -425,6 +408,9 @@ class MainWindow(QMainWindow):
             self.qm.stop(); self.qm.wait(10)
             for jid in running:
                 self.qm.retry(jid)
+        fw = QApplication.focusWidget()
+        if fw is not None:
+            fw.clearFocus()  # commits a field being typed in (e.g. the file name) before the edit is saved
         self.settings.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
         self.settings.save()
         self.editor.session.save()

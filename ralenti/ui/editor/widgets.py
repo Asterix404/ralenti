@@ -76,7 +76,8 @@ class _Row(QFrame):
 
 
 ROWS = [("clips", "film-strip", "Video"), ("trim", "scissors", "Trim"), ("crop", "crop", "Transform"),
-        ("motion", "sparkle", "Interpolation"), ("audio", "speaker-high", "Audio"), ("output", "export", "Output")]
+        ("motion", "sparkle", "Interpolation"), ("audio", "speaker-high", "Audio"), ("encode", "gauge", "Encode"),
+        ("output", "export", "Output")]
 
 
 class StepSummary(QFrame):

@@ -41,6 +41,8 @@ class Settings:
     ffmpeg_repo: str = ""
     rife_repo: str = ""
     sidebar_collapsed: bool = False
+    name_template: str = ""
+    edit_preset_noconfirm: bool = False
     concurrency: str = "auto"
     last_version: str = ""
 
