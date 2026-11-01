@@ -67,6 +67,8 @@ class Previews(QObject):
         p.resolve = self._resolve if on else None
         p.on_uncovered = self._uncovered if on else None
         p.cmp.setVisible(on); p.layout_seg.setVisible(on)
+        if hasattr(self.page, "cmp_row"):
+            self.page.cmp_row.setVisible(on)
         if not on:
             p.hide_cta()
             if p.take:

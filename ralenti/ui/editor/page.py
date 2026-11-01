@@ -49,6 +49,17 @@ PLAYING = QMediaPlayer.PlayingState
 SCENE_TOL, PICK_TOL = 0.12, 0.25
 
 
+def _detach(layout, w) -> None:
+    """Takes a widget out of a layout and all its nested layouts, so it can move without a Qt warning."""
+    if layout is None:
+        return
+    layout.removeWidget(w)
+    for i in range(layout.count()):
+        sub = layout.itemAt(i).layout()
+        if sub is not None:
+            _detach(sub, w)
+
+
 class EditorPage(QWidget):
     dots_changed = Signal()
 
@@ -94,6 +105,8 @@ class EditorPage(QWidget):
         p.timeline.view_changed.connect(self.segbar.update)
         self.previews = Previews(self)
         self._build_tools()
+        self.cmp_row = self._compare_row()
+        p.add_row(self.cmp_row)
         p.add_row(self.tool_stack)
         self.trim_box = QWidget()
         tb = QVBoxLayout(self.trim_box); tb.setContentsMargins(0, 2, 0, 0); tb.setSpacing(4)
@@ -166,6 +179,19 @@ class EditorPage(QWidget):
     def set_preview_count(self, n: int) -> None:
         if hasattr(self, "m_tabs"):
             self.m_tabs.group.button(1).setText(f"Previews · {n}" if n else "Previews")
+
+    def _compare_row(self) -> QWidget:
+        """The player's compare controls on their own row (Interpolation only). Next to the play buttons, zoom
+        and volume they didn't fit, and Qt squeezed the speaker buttons to nothing."""
+        p = self.player
+        w = QFrame(); w.setObjectName("ToolRow")
+        h = QHBoxLayout(w); h.setContentsMargins(6, 4, 8, 4); h.setSpacing(6)
+        for x in (p.cmp, p.layout_seg, p.speed_btn):
+            _detach(p.layout(), x)
+            h.addWidget(x)
+        h.addStretch(1)
+        w.hide()
+        return w
 
     # ---------- tool rows ----------
     def _build_tools(self) -> None:

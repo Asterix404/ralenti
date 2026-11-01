@@ -341,6 +341,7 @@ class PlayerPanel(QWidget):
     def _spk(self, i: int) -> QToolButton:
         b = QToolButton(); b.setCheckable(True); b.setFocusPolicy(Qt.NoFocus); b.setCursor(Qt.PointingHandCursor)
         b.setIcon(icon("speaker-high", "faint", active="text", checked="accent")); b.setIconSize(QSize(17, 17))
+        b.setFixedSize(30, 26)
         b.clicked.connect(lambda: self._set_audio_side(i))
         return b
 
