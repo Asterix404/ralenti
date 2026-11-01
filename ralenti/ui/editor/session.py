@@ -103,7 +103,9 @@ class EditSession(QObject):
         """Cuts are times on the joined video and a drawn crop belongs to the first clip. Both stop making sense
         when the clips change other than by adding clips at the end. Ctrl+Z brings them back."""
         self.edit.trim.update(on=False, cuts=[], drop=[], start=None, end=None)
+        self.edit.motion.update(cuts_add=[], cuts_remove=[])
         if first_changed:
+            self.edit.crop.update(rotate=0, hflip=False, vflip=False)   # how one file was recorded
             if isinstance(self.edit.crop.get("crop"), list):
                 self.edit.crop["crop"] = "none"
             self.edit.output["name"] = getattr(self.qm.settings, "name_template", "") or ""

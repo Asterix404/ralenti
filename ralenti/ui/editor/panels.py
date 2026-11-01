@@ -104,23 +104,16 @@ class TrimPanel(Panel):
     def __init__(self, s):
         super().__init__(s)
         self.v.addWidget(hint("Split the video with cuts, then choose which segments to keep. Kept segments are "
-                              "joined in order. On the bar under the player: click a segment to keep or remove it, "
-                              "drag a cut to move it, right-click a cut to delete it."))
-        self.cut_btn = button("Add cut at playhead", lambda: self.add_cut.emit(), "accent", icon="scissors")
-        self.cut_btn.setToolTip("Splits the segment under the playhead (C)")
-        self.v.addWidget(self.cut_btn)
+                              "joined in order. The tools under the player add cuts (C), jump between them (, and .) "
+                              "and keep or remove the segment under the playhead (X). On the bar: click a segment, "
+                              "drag a cut, right-click a cut to delete it."))
         self.rows_box = QWidget()
         self.rows = QVBoxLayout(self.rows_box); self.rows.setContentsMargins(0, 0, 0, 0); self.rows.setSpacing(6)
         self.v.addWidget(Field("Segments", self.rows_box))
         self.v.addWidget(self._row(button("Keep all", self._keep_all, "ghost", icon="check"),
                                    button("Remove all cuts", self._clear, "ghost", icon="eraser")))
-        self.snap = QCheckBox("Snap cuts to keyframes"); self.snap.setChecked(True)
-        self.snap.setToolTip("Needed for exact lossless cuts with Encode › Copy. Keyframes are the ticks under the timeline.")
-        self.kept_only = QCheckBox("Play kept parts only")
-        self.kept_only.setToolTip("Skips removed segments while playing here. The other steps always skip them.")
         self.info = hint()
-        for w in (self.snap, self.kept_only, self.info):
-            self.v.addWidget(w)
+        self.v.addWidget(self.info)
         self.v.addStretch(1)
 
     def _trim(self, tr: dict) -> None:
@@ -157,7 +150,6 @@ class TrimPanel(Panel):
             if w:
                 w.deleteLater()
         m = self.s.media()
-        self.cut_btn.setEnabled(m is not None)
         if m is None:
             self.info.setText("Open a video first.")
             return
@@ -201,10 +193,10 @@ class CropPanel(Panel):
             self.mode.add(title, key, blurb, tag)
         self.mode.currentIndexChanged.connect(self._mode)
         self.v.addWidget(Field("Crop", self.mode))
-        self.draw = QPushButton("Draw crop"); self.draw.setCheckable(True); self.draw.setIcon(icon("crop", "text"))
-        self.draw.toggled.connect(self.draw_toggled.emit)
         self.detect = button("Detect bars", self._detect, icon="magic-wand")
-        self.v.addWidget(self._row(self.draw, self.detect))
+        self.v.addWidget(self._row(self.detect))
+        self.v.addWidget(hint("Rotate, flip and draw the crop with the tools under the player. The picture shows "
+                              "the result live, here and on every step after this one."))
         self.ratio = NiceCombo()
         for label, r in RATIOS:
             self.ratio.addItem(label, r)
@@ -229,7 +221,7 @@ class CropPanel(Panel):
         m = self.mode.currentData()
         if m == "custom":
             if not isinstance(self.s.edit.crop.get("crop"), list):
-                self.draw.setChecked(True)
+                self.draw_toggled.emit(True)
             return
         self._set(on=True, crop=m)
 

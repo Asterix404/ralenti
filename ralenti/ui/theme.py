@@ -253,6 +253,19 @@ QFrame#SegRow QLabel, QFrame#SegRow QCheckBox {{ background: transparent; }}
 QPushButton#Chip {{ padding: 3px 6px; border-radius: 7px; font-family: Consolas; font-size: 8.5pt; }}
 QLabel#NamePreview {{ background: {SURFACE2}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px 10px;
     font-family: Consolas; }}
+QFrame#ToolRow {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; }}
+QFrame#ToolRow QLabel {{ background: transparent; }}
+QFrame#ToolSep {{ background: {BORDER}; border: none; }}
+QToolButton#ToolBtn {{ font-size: 9pt; font-weight: 600; color: {MUTED}; padding: 4px 8px; border-radius: 7px; }}
+QToolButton#ToolBtn:hover {{ background: {SURFACE3}; color: {TEXT}; }}
+QToolButton#ToolBtn:checked {{ background: {soft}; color: {a}; }}
+QToolButton#ToolBtn:disabled {{ color: {FAINT}; }}
+QToolButton#ToolBtn[accent="true"] {{ background: {a}; color: {ON_ACCENT}; }}
+QToolButton#ToolBtn[accent="true"]:hover {{ background: {hover}; }}
+QToolButton#ToolBtn[accent="true"]:disabled {{ background: {SURFACE3}; color: {FAINT}; }}
+QPushButton#AppliedChip {{ background: {soft}; border: 1px solid {soft_border}; border-radius: 12px;
+    padding: 3px 10px; color: {TEXT}; font-size: 9pt; }}
+QPushButton#AppliedChip:hover {{ border-color: {a}; }}
 """
 
 

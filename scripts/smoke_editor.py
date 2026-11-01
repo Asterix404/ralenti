@@ -79,9 +79,9 @@ def check(label, fn):
         return None
 
 
-def expect(cond, detail):
+def expect(cond, detail, fail=None):
     if not cond:
-        raise AssertionError(detail)
+        raise AssertionError(fail if fail is not None else detail)
     return detail
 
 
@@ -170,10 +170,43 @@ def run(app, video):
                                                              bar.combo.currentText())[2])
             check("preset bar keeps the name", lambda: expect(bar._name == pick, bar._name))
             check("Ctrl+Z restores the edit", lambda: (ses.undo(), pump(app),
-                                                       expect(ses.edit.to_dict() == before, "edit differs"))[2])
+                                                       expect(ses.edit.to_dict() == before, "identical", "edit differs"))[2])
             check("picker after undo", lambda: bar.combo.currentText())
         finally:
             s.edit_preset_noconfirm = flag
+
+    # ---- batch 3: tool rows, live transform, chips, scene cuts (starts from a clean transform) ----
+    win.go("crop"); pump(app)
+    check("crop tool row is showing", lambda: expect(ed.tool_stack.currentWidget() is ed.rows["crop"]
+                                                       and not ed.tool_stack.isHidden(), "yes", "wrong or hidden"))
+    check("reset transform first", lambda: (ed._reset_transform(), pump(app),
+                                            expect(int(ses.edit.crop.get("rotate") or 0) == 0
+                                                   and not ses.edit.crop.get("hflip"), "clean", str(ses.edit.crop)))[2])
+    check("rotate right (toolbar)", lambda: (ed.c_rr.click(), pump(app),
+                                             expect(int(ses.edit.crop.get("rotate") or 0) % 360 == 90, "90°",
+                                                    str(ses.edit.crop)))[2])
+    check("player picture is rotated", lambda: expect(abs(ed.player.view.holder.transform().m11()) < 0.5,
+                                                      "rotated", "not rotated"))
+    check("flip horizontally (toolbar)", lambda: (ed.c_hf.click(), pump(app),
+                                                  expect(ses.edit.crop.get("hflip") is True, "on",
+                                                         str(ses.edit.crop)))[2])
+    check("Before shows the source", lambda: (ed.c_before.click(), pump(app),
+                                              expect(abs(ed.player.view.holder.transform().m11() - 1) < 1e-6,
+                                                     "untouched", "still transformed"), ed.c_before.click())[2])
+    win.go("motion"); pump(app)
+    check("chips show Trim and Transform", lambda: expect({"trim", "crop"} <= {x[0] for x in ed._chip_items},
+                                                          [x[2] for x in ed._chip_items], "missing chips"))
+    check("Interpolation keeps the rotation", lambda: expect(abs(ed.player.view.holder.transform().m11()) < 0.5,
+                                                             "rotated", "not rotated"))
+    ses.set("motion", scene="normal"); pump(app)
+    check("scene cut toggle adds", lambda: (ed._goto(6.0, play=False), pump(app, 20), ed._toggle_scene(), pump(app),
+                                            expect(len(ses.edit.motion.get("cuts_add") or []) == 1,
+                                                   ses.edit.motion.get("cuts_add"), "nothing added"))[4])
+    check("timeline shows the mark", lambda: expect(any(k == "added" for _t, k in ed.player.timeline.marks),
+                                                    ed.player.timeline.marks, "no mark"))
+    check("scene cut toggle removes", lambda: (ed._toggle_scene(), pump(app),
+                                               expect(not ses.edit.motion.get("cuts_add"), "removed",
+                                                      str(ses.edit.motion.get("cuts_add"))))[2])
 
     def kinds():
         return [st.kind for st in compile_job(tc, s, ses.edit).steps]
@@ -200,7 +233,7 @@ def run(app, video):
     delete(ses)
     before = len(slot_errors)
     out.name.editingFinished.emit(); pump(app)
-    check("field commit after the editor is gone", lambda: expect(len(slot_errors) == before, "raised"))
+    check("field commit after the editor is gone", lambda: expect(len(slot_errors) == before, "no exception", "raised"))
 
 
 def report():

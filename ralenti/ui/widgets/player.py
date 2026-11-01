@@ -3,12 +3,13 @@ transport row. The view follows the playhead; previews loop at their end. Takes 
 players bound to the canvas; audio sidecars crossfade (speaker buttons)."""
 import time
 
-from PySide6.QtCore import QEvent, QSize, QSizeF, Qt, QUrl, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import QEvent, QRectF, QSize, QSizeF, Qt, QUrl, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
-from PySide6.QtWidgets import (QButtonGroup, QFrame, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
-                               QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QFrame, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
+                               QGraphicsView, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from ...core.keyframes import key_after, key_before, keyframes, prev_key
 from ..icons import icon, pixmap
@@ -62,9 +63,13 @@ class VideoView(QGraphicsView):
     def __init__(self):
         super().__init__()
         self.setScene(QGraphicsScene(self))
-        self.video = QGraphicsVideoItem()
+        self._fw, self._fh, self._tf = 1920, 1080, (0, False, False, None)
+        self.holder = QGraphicsRectItem()          # clips the picture to the crop; carries rotate/flip
+        self.holder.setPen(QPen(Qt.NoPen))
+        self.holder.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        self.scene().addItem(self.holder)
+        self.video = QGraphicsVideoItem(self.holder)
         self.video.setAspectRatioMode(Qt.IgnoreAspectRatio)
-        self.scene().addItem(self.video)
         self.crop = CropOverlay()
         self.scene().addItem(self.crop)
         self.setBackgroundBrush(QColor("#000000"))
@@ -78,9 +83,30 @@ class VideoView(QGraphicsView):
         self.set_frame(1920, 1080)
 
     def set_frame(self, w: int, h: int) -> None:
+        self._fw, self._fh = w, h
         self.video.setSize(QSizeF(w, h))
-        self.scene().setSceneRect(0, 0, w, h)
         self.crop.set_frame(w, h)
+        self._apply()
+
+    def set_transform(self, rotate: int = 0, hflip: bool = False, vflip: bool = False, rect=None) -> None:
+        """Shows the picture rotated (clockwise, like FFmpeg's transpose), flipped and cropped to rect
+        (w, h, x, y in source pixels). The crop overlay follows the same transform."""
+        tf = (int(rotate or 0) % 360, bool(hflip), bool(vflip), tuple(rect) if rect else None)
+        if tf != self._tf:
+            self._tf = tf
+            self._apply()
+
+    def _apply(self) -> None:
+        rot, hf, vf, rect = self._tf
+        w, h = self._fw, self._fh
+        W, H = (h, w) if rot in (90, 270) else (w, h)
+        t = (QTransform.fromTranslate(-w / 2, -h / 2) * QTransform().rotate(rot)
+             * QTransform.fromScale(-1 if hf else 1, -1 if vf else 1) * QTransform.fromTranslate(W / 2, H / 2))
+        r = QRectF(rect[2], rect[3], rect[0], rect[1]) if rect else QRectF(0, 0, w, h)
+        self.holder.setRect(r)
+        self.holder.setTransform(t)
+        self.crop.setTransform(t)
+        self.scene().setSceneRect(t.mapRect(r))
         self._fit()
 
     def _fit(self):

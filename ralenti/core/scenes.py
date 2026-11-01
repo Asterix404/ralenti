@@ -39,3 +39,21 @@ def apply_manual(cuts, add_s, remove_s, src_fps: float, total: int, tol: int = 3
         if 1 < f < total - 1:
             out.add(f)
     return sorted(out)
+
+
+
+# ===================== editor: scene cuts for the timeline =====================
+def detect_times(ffmpeg: str, info, level: str = "normal") -> list[float]:
+    """Scene cuts of a whole clip in seconds, found the same way the render finds them.
+    Empty when this FFmpeg build has no scdet filter."""
+    from fractions import Fraction
+
+    from .tools import caps, run
+    if not ffmpeg or "scdet" not in caps(ffmpeg).filters:
+        return []
+    rate = info.fps or Fraction(30)
+    fps = float(rate)
+    total = max(1, int(round(float(info.duration or 0) * fps)))
+    r = run(detect_cmd(ffmpeg, info.path, None, None, rate, LEVELS.get(level, LEVELS["normal"])), timeout=3600)
+    text = (getattr(r, "stderr", "") or "") + (getattr(r, "stdout", "") or "")
+    return [round(f / fps, 3) for f in parse(text, fps, total, max(6, int(round(0.4 * fps))))]

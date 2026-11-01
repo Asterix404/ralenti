@@ -20,7 +20,7 @@ from .merge import compat_issues
 from .naming import render, resolve
 from .pipeline import BYTES_PER_PIXEL, _prepare, _tmp, info_to_dict, part_path
 from .probe import probe
-from .segments import boundaries, kept_ranges
+from .segments import boundaries, kept_ranges, source_to_output
 from .tracks import audio_tracks
 from .transform import output_size
 
@@ -188,6 +188,17 @@ def _output(e: Edit, ext: str, tail: str, ctx: dict, overwrite: bool) -> str:
     return str(resolve(folder, base, ext, overwrite))
 
 
+def scene_times(times, ranges) -> list[float]:
+    """Manual scene cuts (source time on the joined clips) as times in the trimmed output. Cuts in removed parts
+    or right on a join are dropped: the join already cuts there."""
+    out = []
+    for t in times or []:
+        t = float(t)
+        if any(a + 0.02 < t < b - 0.02 for a, b in ranges):
+            out.append(round(source_to_output(t, ranges), 3))
+    return out
+
+
 def compile_job(tc, settings, edit: Edit) -> Job:
     e = edit.copy()
     msgs = check(e, tc)
@@ -302,8 +313,8 @@ def compile_job(tc, settings, edit: Edit) -> Job:
         s = {**spec, "model": m.get("model") or "auto", "fps_mode": m.get("fps_mode") or "keep",
              "fps_value": float(m.get("fps_value") or 0), "slowmo": float(m.get("slowmo") or 1),
              "scene": m.get("scene") or "normal", "engine_opts": dict(m.get("engine_opts") or {}),
-             "cuts_add": list(m.get("cuts_add") or []) + (boundaries(ranges) if multi_cut else []),
-             "cuts_remove": list(m.get("cuts_remove") or []), "encoder": enc.key}
+             "cuts_add": scene_times(m.get("cuts_add"), ranges) + (boundaries(ranges) if multi_cut else []),
+             "cuts_remove": scene_times(m.get("cuts_remove"), ranges), "encoder": enc.key}
         eng = _prepare(tc, s)
         use_vmaf = bool(v.get("vmaf")) and enc.has_quality and tc.has_vmaf
         s["vmaf"], s["q"] = (float(v["vmaf"]) if use_vmaf else None), (None if use_vmaf else v.get("q"))

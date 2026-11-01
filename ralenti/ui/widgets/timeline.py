@@ -5,7 +5,7 @@ import math
 from bisect import bisect_left, bisect_right
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
 from .. import theme
@@ -34,6 +34,7 @@ class Timeline(QWidget):
         self.in_s = self.out_s = None
         self.keys: list[float] = []
         self.takes: list[tuple[float, float, bool]] = []
+        self.marks: list[tuple[float, str]] = []      # (time, 'detected' | 'added' | 'removed')
         self.v0, self.v1 = 0.0, None
         self._pan, self._dragging = None, False
         self.setMinimumHeight(58)
@@ -122,6 +123,10 @@ class Timeline(QWidget):
         self.takes = spans or []
         self.update()
 
+    def set_marks(self, marks) -> None:
+        self.marks = sorted(marks or [])
+        self.update()
+
     # ---------- geometry ----------
     def _track(self) -> QRectF:
         return QRectF(8, 14, max(1, self.width() - 16), 10)
@@ -178,6 +183,17 @@ class Timeline(QWidget):
             c = QColor(acc); c.setAlpha(255 if active else 120); p.setBrush(c)
             x0, x1 = self._x(ta), max(self._x(tb), self._x(ta) + 4)
             p.drawRoundedRect(QRectF(x0, r.bottom() + 13, x1 - x0, 5), 2.5, 2.5)
+        for tm, kind in self.marks:
+            if not a <= tm <= b:
+                continue
+            x = self._x(tm)
+            col = QColor({"added": theme.ACCENT, "removed": theme.FAINT}.get(kind, theme.WARN))
+            p.setPen(QPen(col, 1.5, Qt.DashLine if kind == "removed" else Qt.SolidLine))
+            p.drawLine(QPointF(x, r.top() - 2), QPointF(x, r.bottom() + 2))
+            p.setPen(Qt.NoPen); p.setBrush(col)
+            p.drawPolygon(QPolygonF([QPointF(x - 4, r.top() - 6), QPointF(x + 4, r.top() - 6),
+                                     QPointF(x, r.top() - 1)]))
+        p.setPen(Qt.NoPen)
         # ruler
         f = QFont(self.font()); f.setPointSizeF(7.5); p.setFont(f)
         px = r.width() / (b - a)
@@ -245,6 +261,7 @@ def zoom_controls(tl: Timeline) -> QWidget:
     def tb(name, tip, fn):
         b = QToolButton(); b.setIcon(icon(name, "muted", active="text", checked=None)); b.setIconSize(QSize(16, 16))
         b.setToolTip(tip); b.setFocusPolicy(Qt.NoFocus); b.setCursor(Qt.PointingHandCursor)
+        b.setFixedSize(28, 26)
         b.clicked.connect(fn)
         return b
 
