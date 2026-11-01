@@ -253,6 +253,13 @@ def run(app, video):
     win.go("motion"); pump(app)
     check("player back on Interpolation", lambda: expect(ed.work.currentWidget() is ed.player, "yes", "workspace"))
 
+    # ---- batch 4b: Output workspace ----
+    win.go("output"); pump(app)
+    check("Output replaces the player", lambda: expect(ed.work.currentWidget() is ed.output_view, "yes", "player"))
+    check("folder view shows the new file", lambda: expect(ed.output_view.new_item is not None,
+                                                           ed.output_view.new_item.text(0) if ed.output_view.new_item
+                                                           else "", "missing"))
+
     def kinds():
         return [st.kind for st in compile_job(tc, s, ses.edit).steps]
 

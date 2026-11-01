@@ -26,6 +26,7 @@ from .clips_bar import ClipsBar
 from .panels import RATIOS, AudioPanel, CropPanel, EncodePanel, MotionPanel, OutputPanel, TrimPanel
 from .presets_ui import PresetBar
 from .previews import Previews
+from .output_view import OutputView
 from .workspaces import AudioView, EncodeView
 from .session import EditSession
 from .summary import analyse, dur, estimate_html, messages, rows
@@ -116,8 +117,9 @@ class EditorPage(QWidget):
         tb.addWidget(self.segbar); tb.addWidget(h)
         p.add_row(self.trim_box)
         self.audio_view, self.encode_view = AudioView(self), EncodeView(self)
+        self.output_view = OutputView(self)
         self.work = QStackedWidget()
-        for w in (p, self.audio_view, self.encode_view):
+        for w in (p, self.audio_view, self.encode_view, self.output_view):
             self.work.addWidget(w)
         body.addWidget(self.work, 1)
 
@@ -314,7 +316,7 @@ class EditorPage(QWidget):
     def _sync_work(self) -> None:
         """Audio and Encode get their own workspace in place of the player."""
         p = self.player
-        w = {"audio": self.audio_view, "encode": self.encode_view}.get(self.step, p)
+        w = {"audio": self.audio_view, "encode": self.encode_view, "output": self.output_view}.get(self.step, p)
         if w is not p:
             if p.active().playbackState() == PLAYING:
                 p.pause()
@@ -795,6 +797,12 @@ class EditorPage(QWidget):
             self._head()
             self.chips.setVisible(bool(self._chip_items))
 
+    def _remember_folder(self, d: str) -> None:
+        st = self.settings
+        rec = [x for x in (getattr(st, "recent_out_dirs", "") or "").splitlines() if x and x.lower() != d.lower()]
+        st.recent_out_dirs = "\n".join([d] + rec[:7])
+        st.save()
+
     # ---------- queue ----------
     def queue(self) -> None:
         try:
@@ -804,6 +812,13 @@ class EditorPage(QWidget):
             return
         if not confirm_space(self, self.qm, [job]):
             return
+        out_dir = Path(job.output).parent
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as ex:
+            QMessageBox.warning(self, "Ralenti", f"The output folder can't be created:\n{out_dir}\n\n{ex}")
+            return
+        self._remember_folder(str(out_dir))
         self.qm.add(job)
         notes = job.state.get("notes") or []
         notify(self, f"Added {Path(job.output).name} to the queue" + (f" · {notes[0]}" if notes else ""), "ok")

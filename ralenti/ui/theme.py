@@ -272,6 +272,14 @@ QFrame#EncRow:hover {{ background: {SURFACE2}; }}
 QFrame#EncRow[cur="true"] {{ background: {soft}; border-color: {soft_border}; }}
 QFrame#EncRow QLabel {{ background: transparent; }}
 QLabel#StatValue {{ font-size: 15pt; font-weight: 700; }}
+QLabel#OutPath {{ font-weight: 600; font-family: Consolas; }}
+QTreeWidget#FolderView {{ background: {SURFACE2}; border: 1px solid {BORDER}; border-radius: 9px; padding: 4px;
+    outline: 0; }}
+QTreeWidget#FolderView::item {{ padding: 3px 2px; border-radius: 6px; }}
+QTreeWidget#FolderView::item:hover {{ background: {SURFACE3}; }}
+QTreeWidget#FolderView::item:selected {{ background: {soft}; }}
+QHeaderView::section {{ background: {SURFACE2}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER};
+    padding: 4px 6px; font-size: 8pt; font-weight: 700; }}
 """
 
 

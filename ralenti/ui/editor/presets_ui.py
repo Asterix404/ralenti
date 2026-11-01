@@ -34,7 +34,7 @@ class ApplyDialog(QDialog):
             cl.addWidget(cb); cl.addWidget(lb)
             v.addWidget(card)
             self.boxes.append((c["step"], cb))
-        self.dont = QCheckBox("Don't ask again: apply every step right away")
+        self.dont = QCheckBox("Don't ask again (turn it back on in Settings › Editor)")
         v.addWidget(self.dont)
         row = QHBoxLayout(); row.addStretch(1)
         row.addWidget(button("Cancel", self.reject, "ghost"))

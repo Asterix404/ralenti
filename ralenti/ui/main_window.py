@@ -1,4 +1,4 @@
-"""Main window: sidebar (Edit steps, classic pages, app pages), page stack, queue bar, toasts, drop anywhere,
+"""Main window: sidebar (edit steps, app pages), page stack, queue bar, toasts, drop anywhere,
 taskbar progress, updates, setup."""
 from PySide6.QtCore import QByteArray, QEasingCurve, QEvent, QPointF, QSize, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPixmap, QShortcut

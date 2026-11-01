@@ -126,7 +126,7 @@ class QueuePage(QWidget):
         root.addWidget(self.overview)
 
         self.empty = EmptyState("list-checks", "Nothing in the queue",
-                                "Add videos on Interpolate, Trim, Merge or Encode. Jobs show up here "
+                                "Open a video in the editor and press Add to queue. Jobs show up here "
                                 "with live progress.", "Add videos")
         self.empty.action.connect(self.add_requested.emit)
         root.addWidget(self.empty, 1)

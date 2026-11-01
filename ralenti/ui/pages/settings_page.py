@@ -113,6 +113,7 @@ class SettingsPage(QWidget):
             except Exception:
                 traceback.print_exc()
 
+        cv.addWidget(Section("set.editor", "Editor", "sliders", self._editor_section(), settings))
         cv.addWidget(Section("set.perf", "Performance", "gauge", self._perf_section(), settings))
         cv.addWidget(Section("set.ext", "Extensions", "package", self._ext_section(), settings))
         upd = QWidget(); uv = QVBoxLayout(upd); uv.setContentsMargins(0, 0, 0, 0); uv.setSpacing(12)
@@ -477,4 +478,64 @@ def _perf_done(self, res, err: str) -> None:
 
 for _n, _f in {"_perf_section": _perf_section, "_perf_fill": _perf_fill, "_perf_run": _perf_run,
                "_perf_progress": _perf_progress, "_perf_stop": _perf_stop, "_perf_done": _perf_done}.items():
+    setattr(SettingsPage, _n, _f)
+
+
+
+# ---------- editor ----------
+def _editor_section(self):
+    from ...core.naming import PLACEHOLDERS
+    w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(12)
+    self.ed_confirm = QCheckBox("Ask before applying a preset: list what changes, step by step")
+    self.ed_confirm.toggled.connect(self._editor_confirm)
+    v.addWidget(self.ed_confirm)
+    self.ed_name = QLineEdit(); self.ed_name.setPlaceholderText("Automatic: source name + settings")
+    self.ed_name.editingFinished.connect(self._editor_name)
+    v.addWidget(Field("Default file name", self.ed_name,
+                      "Used for every new video. Placeholders: " + " ".join("{" + k + "}" for k in PLACEHOLDERS)
+                      + ". Output › Use as default sets it too."))
+    row = QHBoxLayout(); row.setSpacing(6)
+    row.addWidget(button("Forget recent folders", self._editor_forget, "ghost", icon="eraser")); row.addStretch(1)
+    v.addLayout(row)
+    self._editor_sync()
+    return w
+
+
+def _editor_sync(self) -> None:
+    s = self.settings
+    self.ed_confirm.blockSignals(True)
+    self.ed_confirm.setChecked(not getattr(s, "edit_preset_noconfirm", False))
+    self.ed_confirm.blockSignals(False)
+    if not self.ed_name.hasFocus():
+        self.ed_name.setText(getattr(s, "name_template", "") or "")
+
+
+def _editor_confirm(self, on: bool) -> None:
+    self.settings.edit_preset_noconfirm = not on
+    self.settings.save()
+    self.saved_lbl.setText(f"All changes saved · {time.strftime('%H:%M')}")
+
+
+def _editor_name(self) -> None:
+    t = self.ed_name.text().strip()
+    if t != (getattr(self.settings, "name_template", "") or ""):
+        self.settings.name_template = t
+        self.settings.save()
+        self.saved_lbl.setText(f"All changes saved · {time.strftime('%H:%M')}")
+
+
+def _editor_forget(self) -> None:
+    self.settings.recent_out_dirs = ""
+    self.settings.save()
+    notify(self, "Recent folders cleared", "info")
+
+
+def _settings_show(self, e) -> None:
+    QWidget.showEvent(self, e)
+    if hasattr(self, "ed_confirm"):
+        self._editor_sync()
+
+
+for _n, _f in {"_editor_section": _editor_section, "_editor_sync": _editor_sync, "_editor_confirm": _editor_confirm,
+               "_editor_name": _editor_name, "_editor_forget": _editor_forget, "showEvent": _settings_show}.items():
     setattr(SettingsPage, _n, _f)

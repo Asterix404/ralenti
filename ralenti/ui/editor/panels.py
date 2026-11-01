@@ -528,7 +528,7 @@ class OutputPanel(Panel):
                                  ("Overwrite", "overwrite", "Replaces a file with the same name")])
         self.exists.changed.connect(lambda v: self._set(exists=v))
         self.v.addWidget(Field("If the file exists", self.exists))
-        self.v.addWidget(hint("A view of the destination folder comes to this page in a later update."))
+        self.v.addWidget(hint("The folder view next to this panel shows where the file goes. Double-click a folder there to save in it."))
         self.v.addStretch(1)
 
     def _insert(self, k: str) -> None:

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.13.0 · 2026-11-01 · The editor
+### New
+- **One editor in six steps**: Trim → Transform → Interpolation → Audio → Encode → Output. Each step shows the result of the steps before it, and one summary shows what the output will be.
+- **Trim with as many cuts as you like**: keep or remove each segment; kept parts are joined automatically, losslessly with Encode › Copy.
+- **Join clips**: add several clips and they become one video, losslessly when they match.
+- **Transform**: crop, rotate, flip and resize, shown live in the player and on every later step.
+- **Interpolation**: previews follow your trim, crop and rotation; add or ignore scene cuts on the timeline.
+- **Audio**: every track with its waveform; keep several (for example two languages); listen to the original and the processed sound.
+- **Encode**: size, bitrate and time estimates, a comparison of the encoders, and a quality test with a zoomable still of the original next to the encode.
+- **Output**: file name templates with placeholders, container choice, overwrite or add a number, and a view of the folder your file goes to.
+- **Whole-edit presets** in the header: applying one lists exactly what changes, step by step, and Ctrl+Z undoes it.
+- **Undo and redo** (Ctrl+Z / Ctrl+Y) for the whole edit, saved automatically.
+### Improved
+- The player's tools change with each step, with keyboard shortcuts.
+- Settings › Editor: preset confirmation, default file name and recent folders.
+### Removed
+- The separate Interpolate, Trim, Merge and Encode pages: the editor does all of it.
+
 ## 0.12.0 · 2026-10-29
 ### New
 - **Scene cuts**: Ralenti finds the cuts between shots and never interpolates across them, so shots no longer blend into each other. Off, Normal or Sensitive, in the Motion section. Works with every engine.
