@@ -225,6 +225,34 @@ def run(app, video):
     win.go("audio"); pump(app)
     check("compare controls hidden elsewhere", lambda: expect(ed.player.cmp.isHidden(), "hidden", "visible"))
 
+    # ---- batch 4a: Audio and Encode workspaces ----
+    from ralenti.core.config import TEMP_DIR as _TMP
+    win.go("audio"); pump(app, 10)
+    check("Audio replaces the player", lambda: expect(ed.work.currentWidget() is ed.audio_view, "yes", "player shown"))
+    if ses.info(ed.cur_clip).has_audio:
+        check("audio track rows", lambda: expect(len(ed.audio_view.rows) >= 1, len(ed.audio_view.rows), "no rows"))
+        from ralenti.core.waveform import peaks as _peaks
+        check("waveform", lambda: (lambda r: expect(bool(r[0]), f"{len(r[0])} peaks · {r[1]:.1f} s", "empty"))(
+            _peaks(tc.ffmpeg, ed.cur_clip, 0, 400, ses.media().duration)))
+    else:
+        results.append(("skip", "audio tracks", "this video has no sound"))
+    win.go("encode"); pump(app)
+    check("Encode replaces the player", lambda: expect(ed.work.currentWidget() is ed.encode_view, "yes", "player"))
+    check("encoder comparison rows", lambda: expect(len(ed.encode_view.enc_rows) > 0,
+                                                    list(ed.encode_view.enc_rows), "none"))
+    check("size estimate", lambda: expect(ed.encode_view.st_size.value.text() not in ("", "–"),
+                                          ed.encode_view.st_size.value.text(), "empty"))
+    from ralenti.core.encoders import ENCODERS as _ENC
+    from ralenti.core.quality_test import run_test as _rt
+    _e = next((x for x in _ENC.values() if not x.hidden and x.has_quality and tc.binary_for(x.codec)), None)
+    if _e:
+        check(f"quality test (1.5 s, {_e.label})",
+              lambda: (lambda r: f"VMAF {r['vmaf']} · {r['bps'] * 8 / 1e6:.1f} Mb/s · stills {r['width']}x{r['height']}")(
+                  _rt(tc, ses.info(ed.cur_clip), 1.0, 1.5, _e, None, None, ["transpose=clock"],
+                      Path(s.temp_dir or _TMP) / "smoke_quality")))
+    win.go("motion"); pump(app)
+    check("player back on Interpolation", lambda: expect(ed.work.currentWidget() is ed.player, "yes", "workspace"))
+
     def kinds():
         return [st.kind for st in compile_job(tc, s, ses.edit).steps]
 

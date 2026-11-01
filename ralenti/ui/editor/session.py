@@ -106,6 +106,7 @@ class EditSession(QObject):
         self.edit.motion.update(cuts_add=[], cuts_remove=[])
         if first_changed:
             self.edit.crop.update(rotate=0, hflip=False, vflip=False)   # how one file was recorded
+            self.edit.audio["tracks"] = [0]
             if isinstance(self.edit.crop.get("crop"), list):
                 self.edit.crop["crop"] = "none"
             self.edit.output["name"] = getattr(self.qm.settings, "name_template", "") or ""

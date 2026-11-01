@@ -266,6 +266,12 @@ QToolButton#ToolBtn[accent="true"]:disabled {{ background: {SURFACE3}; color: {F
 QPushButton#AppliedChip {{ background: {soft}; border: 1px solid {soft_border}; border-radius: 12px;
     padding: 3px 10px; color: {TEXT}; font-size: 9pt; }}
 QPushButton#AppliedChip:hover {{ border-color: {a}; }}
+QFrame#SegRow[sel="true"] {{ border-color: {a}; }}
+QFrame#EncRow {{ background: transparent; border: 1px solid transparent; border-radius: 8px; }}
+QFrame#EncRow:hover {{ background: {SURFACE2}; }}
+QFrame#EncRow[cur="true"] {{ background: {soft}; border-color: {soft_border}; }}
+QFrame#EncRow QLabel {{ background: transparent; }}
+QLabel#StatValue {{ font-size: 15pt; font-weight: 700; }}
 """
 
 

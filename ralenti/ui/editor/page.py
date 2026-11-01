@@ -26,6 +26,7 @@ from .clips_bar import ClipsBar
 from .panels import RATIOS, AudioPanel, CropPanel, EncodePanel, MotionPanel, OutputPanel, TrimPanel
 from .presets_ui import PresetBar
 from .previews import Previews
+from .workspaces import AudioView, EncodeView
 from .session import EditSession
 from .summary import analyse, dur, estimate_html, messages, rows
 from .toolbars import AppliedChips, ToolRow, tool
@@ -114,7 +115,11 @@ class EditorPage(QWidget):
         h.setObjectName("Hint"); h.setWordWrap(True)
         tb.addWidget(self.segbar); tb.addWidget(h)
         p.add_row(self.trim_box)
-        body.addWidget(p, 1)
+        self.audio_view, self.encode_view = AudioView(self), EncodeView(self)
+        self.work = QStackedWidget()
+        for w in (p, self.audio_view, self.encode_view):
+            self.work.addWidget(w)
+        body.addWidget(self.work, 1)
 
         self.side = QWidget(); self.side.setFixedWidth(440)
         sv = QVBoxLayout(self.side); sv.setContentsMargins(0, 0, 0, 0); sv.setSpacing(12)
@@ -298,12 +303,33 @@ class EditorPage(QWidget):
         if step in self.rows:
             self.tool_stack.setCurrentWidget(self.rows[step])
         self.previews.set_active(step == "motion")
+        self._sync_work()
         self._head()
         self._sync_view()
         self._sync_chips(analyse(self.session))
         if step == "motion":
             self._find_scenes()
         self._sync_marks()
+
+    def _sync_work(self) -> None:
+        """Audio and Encode get their own workspace in place of the player."""
+        p = self.player
+        w = {"audio": self.audio_view, "encode": self.encode_view}.get(self.step, p)
+        if w is not p:
+            if p.active().playbackState() == PLAYING:
+                p.pause()
+            if p._maxed:
+                p.toggle_max()
+        if self.step != "audio":
+            self.audio_view.stop()
+        self.work.setCurrentWidget(w)
+        if w is not p:
+            w.refresh()
+
+    def _refresh_work(self) -> None:
+        w = self.work.currentWidget()
+        if w is not self.player:
+            w.refresh()
 
     def _head(self) -> None:
         tog = self.step in TOGGLES
@@ -411,6 +437,7 @@ class EditorPage(QWidget):
             self._find_scenes()
         self._sync_marks()
         self.previews.refresh()
+        self._refresh_work()
         self.dots_changed.emit()
 
     # ---------- player ----------

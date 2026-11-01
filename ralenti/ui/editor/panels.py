@@ -450,7 +450,7 @@ class EncodePanel(Panel):
         self.q_field = Field("Constant quality level", self.quality)
         ev.addWidget(self.q_field)
         self.v.addWidget(self.enc_box)
-        self.v.addWidget(hint("A quality test with a side-by-side still comes to this page in a later update."))
+        self.v.addWidget(hint("Estimates, a comparison of the encoders and a quality test are in the workspace next to this panel."))
         self.v.addStretch(1)
         self.reload_options()
 
