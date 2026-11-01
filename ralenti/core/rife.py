@@ -211,6 +211,9 @@ class RifeEngine(Engine):
         src = r.info.fps or Fraction(30)
         m, rate = plan(src, r.target or src, r.slowmo)
         ext, size = rife_extract_cmd(tc, r.info, r.start, r.dur, r.crop, r.size)
+        if getattr(r, "hold_end", False):
+            vi = ext.index("-vf")
+            ext[vi + 1] += ",tpad=stop_mode=clone:stop=1"
         ctl.job.detail = f"RIFE · {m}x frames → {enc.label}"
         run(ctl, tc.rife, path, ext, build_frames_encode(tc, r.info, enc, out, rate, r.target, q), size, m,
             round(r.dur * float(src)), r.tmp / "rife", uhd=size[1] > 1440, span=span,

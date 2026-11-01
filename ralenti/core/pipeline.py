@@ -25,7 +25,7 @@ from .tools import run as run_tool
 
 INTERP_DEFAULTS = dict(model="auto", fps_mode="keep", fps_value=0.0, slowmo=2.0, crop="auto", audio="natural",
                        encoder="av1_nvenc", q=None, vmaf=95.0, start=None, end=None, scale=1.0, device="0",
-                       engine_opts=None, out_dir="", suffix="_ralenti")
+                       engine_opts=None, scene="normal", out_dir="", suffix="_ralenti")
 ENCODE_DEFAULTS = dict(encoder="av1_nvenc", q=None, vmaf=95.0, audio="auto", out_dir="", suffix="_enc")
 BYTES_PER_PIXEL = {"ffv1": 1.6, "ref_nvenc": 0.4}
 
@@ -536,6 +536,7 @@ def _interpolate_seg(job, tc, ctl):
     src = float(r0.info.fps or 30)
     clip0 = r0.start or 0.0
     done = set(st.get("seg_done") or [])
+    cut_ends = set(st.get("cut_ends") or [])
     n = len(segs)
     for i, ((a, b), lim) in enumerate(zip(segs, limits)):
         f = seg_dir / f"{i:05d}.mkv"
@@ -543,8 +544,9 @@ def _interpolate_seg(job, tc, ctl):
             done.add(i)
             continue
         ctl.check()
-        count = (b - a) + (0 if i == n - 1 else 1)        # one extra frame: in-betweens into the next part
-        r = _replace(r0, start=(clip0 + max(0.0, a - 0.25) / src) or None, dur=count / src, limit=lim,
+        hold = i in cut_ends                               # ends at a scene cut: never blend into the next shot
+        count = (b - a) + (0 if i == n - 1 or hold else 1)
+        r = _replace(r0, start=(clip0 + max(0.0, a - 0.25) / src) or None, dur=count / src, limit=lim, hold_end=hold,
                      tmp=Path(p["tmp"]) / "work")
         tmp_out = seg_dir / f"{i:05d}.part.mkv"
         ctl.job.detail = f"{eng.name} · part {i + 1} of {n}"
@@ -589,3 +591,59 @@ def cleanup_temp(job, remove_part: bool = False) -> None:
                 Path(part).unlink(missing_ok=True)
             return
     _cleanup_v0110(job, remove_part)
+
+
+
+# ===================== 0.12.0: scene cuts =====================
+from .scenes import LEVELS as _SCENE_LEVELS, apply_manual as _scene_manual, detect_cmd as _scene_cmd, \
+    parse as _scene_parse  # noqa: E402
+
+
+def plan_segments(total: int, seg: int, cuts=()) -> list[list[int]]:
+    """Source-frame ranges [a, b): split at every scene cut, then evenly inside each shot (parts <= seg)."""
+    out, a = [], 0
+    for b in sorted({c for c in cuts if 0 < c < total}) + [max(1, total)]:
+        n = max(1, math.ceil((b - a) / seg))
+        step = math.ceil((b - a) / n)
+        x = a
+        while x < b:
+            y = min(x + step, b)
+            out.append([x, y])
+            x = y
+        a = b
+    return out
+
+
+_analyze_v011 = HANDLERS["analyze"]
+
+
+def _analyze_v012(job, tc, ctl):
+    p, s, st = job.plan, job.spec, job.state
+    fresh = job.kind == "interpolate" and p.get("segmented") and not st.get("segments")
+    _analyze_v011(job, tc, ctl)
+    level = s.get("scene") or "normal"
+    if not fresh or level == "off" or not st.get("segments"):
+        return
+    from .tools import caps
+    if "scdet" not in caps(tc.ffmpeg).filters:
+        ctl.log("[scenes] this FFmpeg build has no scdet filter: scene cuts skipped")
+        return
+    info = info_from_dict(p["info"])
+    src = info.fps or Fraction(30)
+    start, dur = _trim(s)
+    dur = dur or max(0.0, info.duration - (start or 0))
+    total = st["segments"][-1][1]
+    ctl.job.detail = "Looking for scene cuts"
+    err = ctl.run_ffmpeg(_scene_cmd(tc.ffmpeg, info.path, start, dur, src, _SCENE_LEVELS.get(level, 10.0)), dur)
+    cuts = _scene_parse(err, float(src), total, max(6, int(round(0.4 * float(src)))))
+    cuts = _scene_manual(cuts, s.get("cuts_add"), s.get("cuts_remove"), float(src), total)
+    seg = max(60, int(round(SEG_SECONDS * float(src))))
+    st["segments"] = plan_segments(total, seg, cuts)
+    st["cuts"] = cuts
+    st["cut_times"] = [round(c / float(src), 3) for c in cuts]
+    st["cut_ends"] = [i for i, (_a, b) in enumerate(st["segments"]) if b in set(cuts)]
+    ctl.log(f"[scenes] {len(cuts)} cut(s) at frames {cuts[:50]}")
+    ctl.progress(1.0, f"{len(cuts)} scene cut{'s' if len(cuts) != 1 else ''} found" if cuts else "No scene cuts found")
+
+
+HANDLERS["analyze"] = _analyze_v012

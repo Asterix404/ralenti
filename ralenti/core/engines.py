@@ -40,6 +40,7 @@ class Render:
     opts: dict
     tmp: Path
     limit: int | None = None   # output frames to produce (segmented rendering)
+    hold_end: bool = False     # the part ends at a scene cut: repeat its last frame instead of the next one
 
     @property
     def total(self) -> float:

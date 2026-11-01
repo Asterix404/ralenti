@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.0 · 2026-10-29
+### New
+- **Scene cuts**: Ralenti finds the cuts between shots and never interpolates across them, so shots no longer blend into each other. Off, Normal or Sensitive, in the Motion section. Works with every engine.
+
 ## 0.11.1 · 2026-10-28
 ### New
 - **Live page**: watch an interpolation job while it renders, with sound. A part grid shows what's ready; click any ready part, or anywhere on the timeline, to jump there.

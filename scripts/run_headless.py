@@ -29,6 +29,7 @@ ap.add_argument("--encoder", default="av1_nvenc")
 ap.add_argument("--vmaf", type=float, default=95.0, help="0 = constant quality")
 ap.add_argument("--crop", default="auto", choices=["auto", "none"])
 ap.add_argument("--scale", type=float, default=1.0)
+ap.add_argument("--scene", default="normal", choices=["off", "normal", "sensitive"])
 ap.add_argument("--start", type=float)
 ap.add_argument("--end", type=float)
 ap.add_argument("--length", type=float, default=3.0)
@@ -47,7 +48,7 @@ if a.models or not a.src:
 
 mode, val = ("fixed", a.fixed) if a.fixed else (("multiply", a.mult) if a.mult else ("keep", 0.0))
 opts = dict(model=a.model, fps_mode=mode, fps_value=val, slowmo=a.slowmo, audio=a.audio, encoder=a.encoder,
-            vmaf=a.vmaf or None, crop=a.crop, scale=a.scale, start=a.start, end=a.end,
+            vmaf=a.vmaf or None, crop=a.crop, scale=a.scale, start=a.start, end=a.end, scene=a.scene,
             device=settings.gpu_device or "0")
 if a.encode_only:
     job = pipeline.make_encode_job(tc, settings, a.src, encoder=a.encoder, vmaf=a.vmaf or None)

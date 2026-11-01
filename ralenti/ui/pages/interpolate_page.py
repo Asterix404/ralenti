@@ -174,6 +174,12 @@ class InterpolatePage(QWidget):
         for key, (_m, _v, title, blurb) in FPS.items():
             self.fps.add(title, key, blurb)
         mv.addWidget(Field("Frame rate", self.fps))
+        self.scene = Segmented([("Off", "off", "Interpolate straight through every cut"),
+                                ("Normal", "normal", "Detect clear cuts between shots"),
+                                ("Sensitive", "sensitive", "Also catch softer cuts; may treat flashes as cuts")])
+        self.scene.set_value("normal")
+        mv.addWidget(Field("Scene cuts", self.scene, "Never blends one shot into the next: at each cut the "
+                           "last frame is held for a moment instead. Works with every engine."))
         cv.addWidget(Section("interp.motion", "Motion", "sparkle", motion, settings))
 
         quality = QWidget(); qv = QVBoxLayout(quality); qv.setContentsMargins(0, 0, 0, 0); qv.setSpacing(14)
@@ -260,7 +266,7 @@ class InterpolatePage(QWidget):
 
         for sig in (self.model.currentIndexChanged, self.fps.currentIndexChanged, self.audio.currentIndexChanged,
                     self.crop_default.currentIndexChanged, self.slowmo.changed, self.vmaf.changed,
-                    self.scale.changed, self.quality.changed):
+                    self.scale.changed, self.quality.changed, self.scene.changed):
             sig.connect(self._changed)
         self.model.currentIndexChanged.connect(self._sync_engine)
         self.encoder.currentIndexChanged.connect(self._enc_changed)
@@ -450,7 +456,7 @@ class InterpolatePage(QWidget):
                     audio=self.audio.currentData(), encoder=self.encoder.currentData(),
                     vmaf=self.vmaf.value() or 0.0, q=self.quality.value() if cq else None,
                     crop=self.crop_default.currentData(), scale=self.scale.value(),
-                    engine_opts=self._engine_opts())
+                    engine_opts=self._engine_opts(), scene=self.scene.value())
 
     def _fps_key(self, mode: str, val: float) -> str:
         for k, (m, v, *_) in self.fps_map.items():
@@ -473,6 +479,7 @@ class InterpolatePage(QWidget):
             self.vmaf.set_value(o.get("vmaf") or None)
             self.audio.select(o.get("audio", "natural"))
             self.crop_default.select(o.get("crop", "auto"))
+            self.scene.set_value(o.get("scene", "normal")) or self.scene.set_value("normal")
             self._sync_engine()
             if eng := self._cur_engine():
                 opts = {**eng.defaults(), **(o.get("engine_opts") or {})}
