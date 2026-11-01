@@ -236,3 +236,9 @@ ALIASES.update({
     "zoom-fit": ["ph.arrows-out-line-horizontal", "mdi6.arrow-expand-horizontal", "mdi.arrow-expand-horizontal",
                  "ph.arrows-out"],
 })
+
+
+ALIASES.update({
+    "undo": ["ph.arrow-u-up-left", "ph.arrow-counter-clockwise", "mdi6.undo", "mdi.undo"],
+    "redo": ["ph.arrow-u-up-right", "ph.arrow-clockwise", "mdi6.redo", "mdi.redo"],
+})

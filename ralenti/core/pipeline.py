@@ -817,3 +817,141 @@ def work_units(job):
 
 HANDLERS.update(analyze=_analyze_e1, audio=_audio_e1, join=_join, remux=_remux, render=_render_edit,
                 vmaf_search=_vmaf_e1, encode=_encode_e1)
+
+
+
+# ===================== editor 3: trim segments, audio tracks, overwrite =====================
+_audio_e1_ref = HANDLERS["audio"]
+_finalize_ref = HANDLERS["finalize"]
+
+
+def _audio_tracks_step(job, tc, ctl):
+    p, s = job.plan, job.spec
+    a = p.get("audio_out")
+    if not a or "tracks" not in p:
+        return _audio_e1_ref(job, tc, ctl)
+    info = info_from_dict(p["info"])
+    start, dur = _trim(s)
+    tracks = p.get("tracks") or [0]
+    cmd = _head(tc.ffmpeg) + _seek(start, dur) + ["-i", info.path]
+    for t in tracks:
+        cmd += ["-map", f"0:a:{t}"]
+    cmd += ["-vn", "-sn", "-dn"]
+    if a["mode"] == "copy":
+        cmd += ["-c:a", "copy"]
+    else:
+        if a.get("filter"):
+            for k in range(len(tracks)):
+                cmd += [f"-filter:a:{k}", a["filter"]]
+        cmd += list(a["args"])
+    ctl.job.detail = a.get("label", "Audio") + (f" · {len(tracks)} tracks" if len(tracks) > 1 else "")
+    ctl.run_ffmpeg(cmd + [p["audio_tmp"]], (dur or info.duration - (start or 0)) * float(s.get("slowmo") or 1))
+
+
+def _remux_tracks(job, tc, ctl):
+    p, s = job.plan, job.spec
+    info = info_from_dict(p["info"])
+    start, dur = _trim(s)
+    a = p.get("audio_out") or {"mode": "drop"}
+    cmd = _head(tc.ffmpeg) + _seek(start, dur) + ["-i", info.path, "-map", "0:v:0"]
+    if a["mode"] == "drop" or not info.has_audio:
+        cmd += ["-an"]
+    else:
+        for t in p.get("tracks") or [0]:
+            cmd += ["-map", f"0:a:{t}?"]
+        cmd += ["-c:a", "copy"] if a["mode"] == "copy" else list(a["args"])
+    cmd += ["-c:v", "copy", "-avoid_negative_ts", "make_zero", "-map_metadata", "0"]
+    if Path(p["part"]).suffix.lower() in (".mp4", ".mov"):
+        cmd += ["-movflags", "+faststart"]
+    ctl.job.detail = "Copying the video, no re-encode"
+    ctl.run_ffmpeg(cmd + [p["part"]], dur or max(0.0, info.duration - (start or 0)))
+
+
+def _cutjoin(job, tc, ctl):
+    """Joins the kept segments into one file: stream copy (lossless, keyframe cuts) or frame-accurate."""
+    p = job.plan
+    info = info_from_dict(p["info"])
+    src, tmp = info.path, Path(p["tmp"])
+    tmp.mkdir(parents=True, exist_ok=True)
+    ranges = [tuple(r) for r in p["cut_ranges"]]
+    tracks = p.get("tracks") or [0]
+    audio = bool(p.get("cut_audio")) and info.has_audio
+    out, part = tmp / "trimmed.mkv", tmp / "trimmed.part.mkv"
+    total = sum(b - a for a, b in ranges) or 1.0
+    pieces = []
+    if p.get("cut_lossless"):
+        done = 0.0
+        for i, (a, b) in enumerate(ranges):
+            f = tmp / f"cut{i:03d}.mkv"
+            cmd = _head(tc.ffmpeg) + (["-ss", f"{a:.3f}"] if a > 0 else []) + ["-t", f"{b - a:.3f}", "-i", src,
+                                                                               "-map", "0:v:0"]
+            if audio:
+                for t in tracks:
+                    cmd += ["-map", f"0:a:{t}?"]
+            cmd += ["-c", "copy", "-avoid_negative_ts", "make_zero", str(f)]
+            ctl.job.detail = f"Cutting segment {i + 1} of {len(ranges)}"
+            ctl.run_ffmpeg(cmd, b - a, span=(done / total * 0.9, (done + b - a) / total * 0.9))
+            done += b - a
+            pieces.append(f)
+        lst = write_concat_list([str(x) for x in pieces], tmp / "cuts.txt")
+        ctl.job.detail = f"Joining {len(ranges)} segments"
+        ctl.run_ffmpeg(_head(tc.ffmpeg) + ["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0", "-c", "copy",
+                                           str(part)], 0)
+    else:
+        enc = ENCODERS["ref_nvenc" if tc.binary_for("hevc_nvenc") else "ffv1"]
+        cmd = _head(tc.ffmpeg)
+        for a, b in ranges:
+            cmd += (["-ss", f"{a:.3f}"] if a > 0 else []) + ["-t", f"{b - a:.3f}", "-i", src]
+        n_a = len(tracks) if audio else 0
+        parts, labels = [], ""
+        for i in range(len(ranges)):
+            parts.append(f"[{i}:v:0]setpts=PTS-STARTPTS[v{i}]")
+            labels += f"[v{i}]"
+            for k, t in enumerate(tracks[:n_a]):
+                parts.append(f"[{i}:a:{t}]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS[a{i}_{k}]")
+                labels += f"[a{i}_{k}]"
+        outs = "[v]" + "".join(f"[ao{k}]" for k in range(n_a))
+        parts.append(f"{labels}concat=n={len(ranges)}:v=1:a={n_a}{outs}")
+        cmd += ["-filter_complex", ";".join(parts), "-map", "[v]"]
+        for k in range(n_a):
+            cmd += ["-map", f"[ao{k}]"]
+        cmd += enc.build() + (["-c:a", "flac"] if n_a else ["-an"]) + [str(part)]
+        ctl.job.detail = f"Joining {len(ranges)} segments, frame-accurate"
+        ctl.run_ffmpeg(cmd, total)
+    os.replace(part, out)
+    for f in pieces:
+        f.unlink(missing_ok=True)
+    new = probe(tc.ffprobe, str(out))
+    if not new.width:
+        raise RuntimeError("The joined segments couldn't be read. See the log.")
+    p["info"] = info_to_dict(new)
+    if audio:
+        p["tracks"] = list(range(len(tracks)))
+    p["cut_done"] = True
+    ctl.progress(1.0)
+
+
+def _finalize_v2(job, tc, ctl):
+    out, part = Path(job.output), Path(job.plan.get("part") or "")
+    if job.plan.get("overwrite") and out.exists() and part.exists():
+        out.unlink()
+    _finalize_ref(job, tc, ctl)
+
+
+_work_units_e1 = work_units
+
+
+def work_units(job):
+    w = _work_units_e1(job)
+    p = job.plan
+    if p.get("cut_ranges") and not p.get("cut_done"):
+        try:
+            full = info_from_dict(p["info"]).duration
+        except (KeyError, ValueError, TypeError):
+            return w
+        if full > 0:
+            w *= sum(b - a for a, b in p["cut_ranges"]) / full
+    return w
+
+
+HANDLERS.update(audio=_audio_tracks_step, remux=_remux_tracks, cutjoin=_cutjoin, finalize=_finalize_v2)

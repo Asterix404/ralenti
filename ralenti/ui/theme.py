@@ -237,6 +237,16 @@ QFrame#CompareBox QToolButton:checked {{ background: {soft}; }}
 QLabel#VsLabel {{ background: {soft}; color: {a}; border-radius: 8px; padding: 2px 8px; font-size: 7.5pt; font-weight: 800; }}
 QPushButton#Nav[collapsed="true"] {{ text-align: center; padding: 10px 0; margin: 1px 12px; }}
 QProgressBar[state="paused"]::chunk {{ background: {WARN}; }}
+QLabel#NavHeader {{ color: {FAINT}; font-size: 7.5pt; font-weight: 800; padding: 14px 24px 4px 24px; background: transparent; }}
+QFrame#ClipsBar {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; }}
+QFrame#ClipsBar QLabel {{ background: transparent; }}
+QListWidget#ClipList {{ background: transparent; border: none; padding: 0; }}
+QListWidget#ClipList::item {{ background: {SURFACE2}; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px 6px; margin-right: 6px; }}
+QListWidget#ClipList::item:selected {{ background: {soft}; border-color: {a}; color: {TEXT}; }}
+QFrame#SumStep {{ background: transparent; border-radius: 8px; }}
+QFrame#SumStep:hover {{ background: {SURFACE2}; }}
+QFrame#SumStep QLabel {{ background: transparent; }}
+QFrame#SumStep[off="true"] QLabel#SumValue {{ color: {FAINT}; }}
 """
 
 

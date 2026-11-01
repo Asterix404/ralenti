@@ -88,7 +88,7 @@ def build_audio(tc: Toolchain, info: MediaInfo, mode: AudioMode, slowmo: float, 
 
 def build_mux(tc: Toolchain, video: str, audio: str | None, output: str, vtag: str | None = None) -> list[str]:
     cmd = _head(tc.ffmpeg) + ["-i", video] + (["-i", audio] if audio else [])
-    cmd += ["-map", "0:v:0"] + (["-map", "1:a:0"] if audio else []) + ["-c", "copy", "-map_metadata", "0"]
+    cmd += ["-map", "0:v:0"] + (["-map", "1:a"] if audio else []) + ["-c", "copy", "-map_metadata", "0"]
     if Path(output).suffix.lower() in (".mp4", ".mov"):
         if vtag:
             cmd += ["-tag:v", vtag]

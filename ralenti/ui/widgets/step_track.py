@@ -94,3 +94,5 @@ class StepTrack(QWidget):
 
 
 SHORT.update({"join": "Join", "render": "Render", "remux": "Copy"})
+
+SHORT.update({"cutjoin": "Segments"})
