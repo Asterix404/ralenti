@@ -1,6 +1,7 @@
 """The editor: one video (one or more clips), a player tailored to each step, six step pages, presets and one
 summary. Each step has its own tools under the player. From Transform on, the player shows the rotated, flipped
-and cropped picture live. Removed segments are skipped while playing (in Trim only when asked)."""
+and cropped picture live. Previews and compare live on Interpolation only. Removed segments are hatched on the
+timeline and skipped while playing (in Trim only when asked)."""
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -19,10 +20,12 @@ from ..space_check import confirm_space
 from ..util import fmt_ts, notify
 from ..widgets.panel import options_scroll
 from ..widgets.player import PlayerPanel
+from ..widgets.segmented import Segmented
 from ..workers import run_async
 from .clips_bar import ClipsBar
 from .panels import RATIOS, AudioPanel, CropPanel, EncodePanel, MotionPanel, OutputPanel, TrimPanel
 from .presets_ui import PresetBar
+from .previews import Previews
 from .session import EditSession
 from .summary import analyse, dur, estimate_html, messages, rows
 from .toolbars import AppliedChips, ToolRow, tool
@@ -33,7 +36,8 @@ STEPS_UI = {
     "trim": ("Trim", "Cut the video into segments and keep only what you need. On its own it's instant and lossless."),
     "crop": ("Transform", "Crop, remove black bars, rotate, flip and resize. Applied before the AI, so it also "
                           "makes it faster."),
-    "motion": ("Interpolation", "Smooth slow motion and higher frame rates with AI interpolation."),
+    "motion": ("Interpolation", "Smooth slow motion and higher frame rates with AI interpolation. Preview a few "
+                                "seconds before rendering the whole video."),
     "audio": ("Audio", "Keep the original sound, convert it, or remove it."),
     "encode": ("Encode", "How the video is encoded: copied as is, or re-encoded to a quality target."),
     "output": ("Output", "Where the file goes and what it's called."),
@@ -88,6 +92,7 @@ class EditorPage(QWidget):
         self.segbar.cut_moved.connect(self._cut_moved)
         self.segbar.cut_removed.connect(self._cut_removed)
         p.timeline.view_changed.connect(self.segbar.update)
+        self.previews = Previews(self)
         self._build_tools()
         p.add_row(self.tool_stack)
         self.trim_box = QWidget()
@@ -105,8 +110,8 @@ class EditorPage(QWidget):
         self.stack = QStackedWidget(); cl.addWidget(self.stack)
         self.panels = {"trim": TrimPanel(s), "crop": CropPanel(s), "motion": MotionPanel(s), "audio": AudioPanel(s),
                        "encode": EncodePanel(s), "output": OutputPanel(s)}
-        for panel in self.panels.values():
-            self.stack.addWidget(options_scroll(panel))
+        for key, panel in self.panels.items():
+            self.stack.addWidget(self._motion_side(panel) if key == "motion" else options_scroll(panel))
         self.panels["trim"].goto.connect(lambda t: self._goto(t, play=False))
         self.panels["crop"].draw_toggled.connect(self.c_draw.setChecked)
         self.panels["crop"].ratio_changed.connect(self._ratio)
@@ -125,7 +130,8 @@ class EditorPage(QWidget):
                 ("H", lambda: self._on("crop", self.c_hf.toggle)), ("V", lambda: self._on("crop", self.c_vf.toggle)),
                 ("D", lambda: self._on("crop", self.c_draw.toggle)),
                 ("B", lambda: self.step != "trim" and self.c_before.toggle()),
-                ("S", lambda: self._on("motion", self._toggle_scene))]
+                ("S", lambda: self._on("motion", self._toggle_scene)),
+                ("P", lambda: self._on("motion", self.previews.render))]
         for k, fn in keys:
             sc = QShortcut(QKeySequence(k), self); sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
@@ -135,6 +141,31 @@ class EditorPage(QWidget):
             edit_presets.apply(s.edit, r)
         self._changed("all")
         self.show_step("motion")
+
+    # ---------- Interpolation side panel: Settings / Previews ----------
+    def _motion_side(self, panel) -> QWidget:
+        w = QWidget(); w.setObjectName("OptionsBody"); w.setAttribute(Qt.WA_StyledBackground)
+        v = QVBoxLayout(w); v.setContentsMargins(0, 12, 0, 0); v.setSpacing(8)
+        self.m_tabs = Segmented([("Settings", "settings", "How the AI interpolates this video"),
+                                 ("Previews", "previews", "Rendered test takes: compare them in the player")])
+        self.m_tabs.set_value("settings")
+        self.m_tabs.changed.connect(self._motion_tab)
+        tw = QWidget(); tl = QHBoxLayout(tw); tl.setContentsMargins(14, 0, 14, 0); tl.addWidget(self.m_tabs)
+        self.m_pages = QStackedWidget()
+        self.m_pages.addWidget(options_scroll(panel)); self.m_pages.addWidget(self.previews.panel)
+        v.addWidget(tw); v.addWidget(self.m_pages, 1)
+        return w
+
+    def _motion_tab(self, v) -> None:
+        self.m_tabs.set_value(v)
+        self.m_pages.setCurrentIndex(1 if v == "previews" else 0)
+
+    def show_previews_tab(self) -> None:
+        self._motion_tab("previews")
+
+    def set_preview_count(self, n: int) -> None:
+        if hasattr(self, "m_tabs"):
+            self.m_tabs.group.button(1).setText(f"Previews · {n}" if n else "Previews")
 
     # ---------- tool rows ----------
     def _build_tools(self) -> None:
@@ -172,14 +203,18 @@ class EditorPage(QWidget):
         r.add(self.c_draw, self.c_shape, self.c_detect, self.c_reset); r.sep(); r.add(self.c_before); r.finish()
 
         r = self.rows["motion"]
+        self.m_preview = tool("Preview", "play-circle", "Render a few seconds at the playhead with the current "
+                                                        "settings (P). Follows your trim, crop and rotation.",
+                              lambda: self.previews.render(), accent=True)
         self.m_scene = tool("Scene cut", "plus-circle", "Add a scene cut at the playhead, or remove the one there (S). "
                                                         "Interpolation never blends across a scene cut.",
-                            self._toggle_scene, accent=True)
+                            self._toggle_scene)
         self.m_prev = tool("", "caret-double-left", "Previous scene cut (,)", lambda: self._jump_scene(-1))
         self.m_next = tool("", "caret-double-right", "Next scene cut (.)", lambda: self._jump_scene(1))
         self.m_find = tool("Find cuts", "magic-wand", "Detect the scene cuts in the video",
                            lambda: self._find_scenes(force=True))
-        r.add(self.m_scene); r.sep(); r.add(self.m_prev, self.m_next); r.sep(); r.add(self.m_find); r.finish()
+        r.add(self.m_preview); r.sep(); r.add(self.m_scene, self.m_prev, self.m_next); r.sep(); r.add(self.m_find)
+        r.finish()
 
         self.tool_stack = QStackedWidget()
         for row in self.rows.values():
@@ -211,7 +246,7 @@ class EditorPage(QWidget):
         for b, k in ((self.c_hf, "hflip"), (self.c_vf, "vflip")):
             b.blockSignals(True); b.setChecked(bool(c.get("on") and c.get(k))); b.blockSignals(False)
         for b in (self.t_cut, self.t_kept, self.t_snap, self.c_rl, self.c_rr, self.c_hf, self.c_vf, self.c_draw,
-                  self.c_shape, self.c_reset, self.c_before):
+                  self.c_shape, self.c_reset, self.c_before, self.m_preview):
             b.setEnabled(has)
         cuts = (to_cuts(e.trim, s.media().duration).get("cuts") or []) if has and e.trim.get("on") else []
         self.t_prev.setEnabled(bool(cuts)); self.t_next.setEnabled(bool(cuts))
@@ -236,6 +271,7 @@ class EditorPage(QWidget):
         self.tool_stack.setVisible(step in self.rows)
         if step in self.rows:
             self.tool_stack.setCurrentWidget(self.rows[step])
+        self.previews.set_active(step == "motion")
         self._head()
         self._sync_view()
         self._sync_chips(analyse(self.session))
@@ -348,6 +384,7 @@ class EditorPage(QWidget):
         if self.step == "motion" and what & {"clips", "all", "motion"}:
             self._find_scenes()
         self._sync_marks()
+        self.previews.refresh()
         self.dots_changed.emit()
 
     # ---------- player ----------
@@ -364,24 +401,28 @@ class EditorPage(QWidget):
         self._sync_overlays()
         self._sync_view()
         self._sync_marks()
+        self.previews.refresh()
 
     def _goto(self, t: float, play=None) -> None:
         s = self.session
         if not s.edit.clips:
             return
         path, local = s.clip_at(t)
-        playing = self.player.player.playbackState() == PLAYING if play is None else play
+        playing = self.player.active().playbackState() == PLAYING if play is None else play
         if path != self.cur_clip:
             self._show_clip(path, select=True)
             self.player._pending_seek = local
             self.player.autoplay = playing
+        elif self.player.resolve:
+            self.player.route_to(local, play=playing)
         else:
             self.player.seek(local)
             if playing:
                 self.player.player.play()
 
     def _joined_pos(self) -> float:
-        return self.session.clip_offset(self.cur_clip) + self.player.position() if self.cur_clip else 0.0
+        """Playhead on the joined video, in source time (also while a slowed-down preview is showing)."""
+        return self.session.clip_offset(self.cur_clip) + self.player.source_position() if self.cur_clip else 0.0
 
     def _pos(self, ms: int) -> None:
         s = self.session
@@ -427,13 +468,14 @@ class EditorPage(QWidget):
         if not self.cur_clip:
             return
         off, cd = s.clip_offset(self.cur_clip), s.info(self.cur_clip).duration
-        spans = []
+        kept = None
         if e.trim.get("on"):
+            kept = []
             for a, b in kept_ranges(e.trim, s.media().duration):
                 la, lb = max(0.0, a - off), min(cd, b - off)
                 if lb > la + 1e-3:
-                    spans.append((la, lb, True))
-        self.player.set_takes(spans)
+                    kept.append((la, lb))
+        self.player.timeline.set_kept(kept)
         crop = e.crop.get("crop")
         if isinstance(crop, list) and self.cur_clip == e.clips[0]:
             self.player.view.crop.set_crop(crop)

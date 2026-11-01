@@ -208,6 +208,23 @@ def run(app, video):
                                                expect(not ses.edit.motion.get("cuts_add"), "removed",
                                                       str(ses.edit.motion.get("cuts_add"))))[2])
 
+    # ---- batch 3b: previews ----
+    win.go("motion"); pump(app)
+    check("compare controls on Interpolation", lambda: expect(not ed.player.cmp.isHidden(), "visible", "hidden"))
+    check("Previews tab", lambda: (ed._motion_tab("previews"), pump(app),
+                                   expect(ed.m_pages.currentIndex() == 1, "shown", "not shown"),
+                                   ed._motion_tab("settings"))[2])
+    from ralenti.core.engines import resolve_model
+    if resolve_model(tc, ses.edit.motion.get("model")):
+        check("preview job follows Transform",
+              lambda: (lambda j: expect(j.spec["transform"]["rotate"] == 90 and j.spec["transform"]["hflip"],
+                                        [st.kind for st in j.steps], str(j.spec["transform"])))(
+                  ed.previews.build_job(ed.cur_clip, 1.0, 2.0)))
+    else:
+        results.append(("skip", "preview job", "no AI engine installed"))
+    win.go("audio"); pump(app)
+    check("compare controls hidden elsewhere", lambda: expect(ed.player.cmp.isHidden(), "hidden", "visible"))
+
     def kinds():
         return [st.kind for st in compile_job(tc, s, ses.edit).steps]
 

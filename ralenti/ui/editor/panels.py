@@ -295,7 +295,8 @@ class MotionPanel(Panel):
                 f = Field(opt.title, seg, opt.hint)
                 self.v.addWidget(f); rows.append((opt, seg, f))
             self.opts[eng.key] = rows
-        self.v.addWidget(hint("Previews and comparing come back to this page in the next update."))
+        self.v.addWidget(hint("Preview a few seconds with Preview under the player (P). Previews follow your "
+                              "trim, crop and rotation. Compare them in the Previews tab and in the player."))
         self.v.addStretch(1)
         self.reload_options()
 

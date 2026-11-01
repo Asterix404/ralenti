@@ -5,7 +5,7 @@ import math
 from bisect import bisect_left, bisect_right
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
 from .. import theme
@@ -35,6 +35,7 @@ class Timeline(QWidget):
         self.keys: list[float] = []
         self.takes: list[tuple[float, float, bool]] = []
         self.marks: list[tuple[float, str]] = []      # (time, 'detected' | 'added' | 'removed')
+        self.kept = None                              # [(start, end)] kept by Trim, None = everything
         self.v0, self.v1 = 0.0, None
         self._pan, self._dragging = None, False
         self.setMinimumHeight(58)
@@ -127,6 +128,11 @@ class Timeline(QWidget):
         self.marks = sorted(marks or [])
         self.update()
 
+    def set_kept(self, ranges) -> None:
+        """Parts kept by Trim; everything else is hatched on the track."""
+        self.kept = None if ranges is None else sorted(ranges)
+        self.update()
+
     # ---------- geometry ----------
     def _track(self) -> QRectF:
         return QRectF(8, 14, max(1, self.width() - 16), 10)
@@ -157,6 +163,18 @@ class Timeline(QWidget):
             p.drawRoundedRect(QRectF(x0, 3, max(4.0, x1 - x0), 3), 1.5, 1.5)
         p.save()
         p.setClipRect(QRectF(r.left() - 1, 8, r.width() + 2, self.height()))
+        if self.kept is not None:
+            gaps, prev = [], 0.0
+            for ka, kb in self.kept:
+                if ka > prev + 1e-3:
+                    gaps.append((prev, ka))
+                prev = max(prev, kb)
+            if prev < self.duration - 1e-3:
+                gaps.append((prev, self.duration))
+            for ga, gb in gaps:
+                rect = QRectF(self._x(ga), r.top(), self._x(gb) - self._x(ga), r.height())
+                p.setBrush(QColor(0, 0, 0, 90)); p.drawRect(rect)
+                p.setBrush(QBrush(QColor(theme.FAINT), Qt.BDiagPattern)); p.drawRect(rect)
         played = QColor(acc); played.setAlpha(55); p.setBrush(played)
         xp = min(max(self._x(self.position), r.left()), r.right())
         p.drawRoundedRect(QRectF(r.left(), r.top(), xp - r.left(), r.height()), 4, 4)

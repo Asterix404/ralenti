@@ -177,3 +177,37 @@ def build_preview_compose(tc: Toolchain, info: MediaInfo, ai_path: str, slowmo: 
         for label, path in (("[ao]", audio_outs[0]), ("[aq]", audio_outs[1])):
             cmd += ["-map", label, "-c:a", "aac", "-b:a", "192k", path]
     return cmd
+
+
+
+# ===================== editor: previews that follow Transform =====================
+def build_preview_compose2(tc: Toolchain, info: MediaInfo, ai_path: str, slowmo: float, video_out: str,
+                           audio_outs, enc: Encoder, *, crop: Crop | None = None, fps=None, start=None,
+                           duration=None, audio_mode: AudioMode = AudioMode.NATURAL, transform: str = "",
+                           max_w: int = 1600, max_h: int = 1000) -> list[str]:
+    """Like build_preview_compose, with the rotate/flip filters applied to the original half too, so both halves
+    show the same framing (the engine already transformed the AI half)."""
+    bw, bh = (crop.w, crop.h) if crop else (info.width, info.height)
+    if "transpose" in (transform or ""):
+        bw, bh = bh, bw
+    k = min(1.0, max_w / bw, max_h / bh)
+    w, h = max(64, int(bw * k) // 2 * 2), max(64, int(bh * k) // 2 * 2)
+    fps = fps or info.fps
+    rate = f"{fps.numerator}/{fps.denominator}"
+    tail = f"fps={rate},setpts=N/FRAME_RATE/TB,scale={w}:{h}:flags=lanczos,format=yuv420p"
+    head = ((crop.filter + ",") if crop else "") + ((transform + ",") if transform else "")
+    parts = [f"[0:v:0]{head}setpts=(PTS-STARTPTS)*{slowmo:g},{tail}[b]", f"[1:v:0]{tail}[a]",
+             "[b][a]vstack=inputs=2:shortest=1[v]"]
+    audio = bool(audio_outs) and info.has_audio
+    if audio:
+        proc = ("volume=0" if audio_mode == AudioMode.DROP else
+                audio_filter(audio_mode, slowmo, info.sample_rate, rubberband=tc.has_rubberband) or "anull")
+        parts += ["[0:a:0]asetpts=PTS-STARTPTS,asplit=2[ao0][ap]",
+                  f"[ao0]{atempo_chain(1 / float(slowmo))}[ao]", f"[ap]{proc}[aq]"]
+    cmd = _head(tc.ffmpeg) + _seek(start, duration) + [
+        "-i", info.path, "-i", ai_path, "-filter_complex", ";".join(parts), "-map", "[v]", "-an",
+        "-fps_mode", "cfr"] + enc.build() + ["-movflags", "+faststart", video_out]
+    if audio:
+        for label, path in (("[ao]", audio_outs[0]), ("[aq]", audio_outs[1])):
+            cmd += ["-map", label, "-c:a", "aac", "-b:a", "192k", path]
+    return cmd

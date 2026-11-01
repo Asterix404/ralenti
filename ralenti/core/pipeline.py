@@ -955,3 +955,35 @@ def work_units(job):
 
 
 HANDLERS.update(audio=_audio_tracks_step, remux=_remux_tracks, cutjoin=_cutjoin, finalize=_finalize_v2)
+
+
+
+# ===================== editor: previews that follow Transform =====================
+def _preview_e3(job, tc, ctl):
+    from .commands import build_preview_compose2
+    p, st = job.plan, job.state
+    eng, r = _render_args(job, tc)
+    r.tmp.mkdir(parents=True, exist_ok=True)
+    ai, pv = r.tmp / "ai.mp4", _preview_encoder(tc)
+    eng.render(r, tc, ctl, pv, str(ai), span=(0.0, 0.85))
+    ctl.job.detail = f"{eng.name} · {r.total:.1f} s preview"
+    part, out = Path(p["part"]), Path(job.output)
+    part.parent.mkdir(parents=True, exist_ok=True)
+    side = [str(out.with_suffix(".orig.m4a")), str(out.with_suffix(".proc.m4a"))] if r.info.has_audio else None
+    cmd = build_preview_compose2(tc, r.info, str(ai), r.slowmo, str(part), side, pv, crop=r.crop, fps=r.target,
+                                 start=r.start, duration=r.dur, audio_mode=AudioMode(p["audio_mode"]),
+                                 transform=st.get("transform") or "")
+    ctl.run_ffmpeg(cmd, r.total, span=(0.85, 1.0))
+    st["sidecars"] = side
+    st["orig_stretched"] = True
+    thumb = out.with_suffix(".jpg")
+    try:
+        run_tool([tc.ffmpeg, "-hide_banner", "-nostdin", "-y", "-ss", f"{r.total / 2:.2f}", "-i", str(part),
+                  "-vf", "crop=iw:ih/2:0:ih/2,scale=320:-2", "-frames:v", "1", "-q:v", "4", str(thumb)], timeout=30)
+    except Exception:
+        pass
+    if thumb.exists():
+        st["thumb"] = str(thumb)
+
+
+HANDLERS["preview"] = _preview_e3
