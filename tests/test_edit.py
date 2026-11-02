@@ -126,3 +126,14 @@ def test_joined_clips_with_interpolation(monkeypatch, tc):
     k = kinds(job)
     assert job.kind == "interpolate" and k[0] == "join" and k.index("audio") < k.index("interpolate")
     assert job.plan["join_lossless"] is False and job.plan["info"]["path"].endswith("joined.mkv")
+
+
+
+_bad_container_v013 = test_bad_container_falls_back
+
+
+def test_bad_container_falls_back(monkeypatch, tc):
+    """0.14: a container that can't hold the encoder blocks the queue instead of saving another type."""
+    import pytest
+    with pytest.raises(ValueError):
+        _bad_container_v013(monkeypatch, tc)

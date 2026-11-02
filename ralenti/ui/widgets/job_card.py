@@ -17,7 +17,8 @@ KIND = {"interpolate": "Interpolate", "encode": "Encode", "cut": "Cut", "merge":
 STATUS_TEXT = {Status.QUEUED: "Waiting", Status.RUNNING: "Running", Status.DONE: "Done",
                Status.FAILED: "Failed", Status.CANCELLED: "Stopped", Status.PAUSED: "Paused"}
 MENU = [("Show log", "log", "file-text"), ("Open folder", "folder", "folder-open"),
-        ("Copy output path", "copy", "copy"), None,
+        ("Copy output path", "copy", "copy"), ("Open temp folder", "temp", "folder-open"),
+        ("Delete temp files", "cleartemp", "broom"), None,
         ("Resume / retry", "resume", "arrow-clockwise"),
         ("Discard progress and restart", "restart", "arrow-counter-clockwise"),
         ("Stop job · progress is kept", "cancel", "stop"), None,
@@ -33,6 +34,20 @@ def job_source(job: Job) -> str | None:
 
 def fmt_size(n: float) -> str:
     return f"{n / 1e9:.2f} GB" if n >= 1e9 else f"{n / 1e6:.1f} MB"
+
+
+def dir_size(path) -> int:
+    """Bytes used by a folder and everything in it (0 if it doesn't exist)."""
+    if not path or not os.path.isdir(path):
+        return 0
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
 
 
 class JobCard(QFrame):
@@ -123,6 +138,15 @@ class JobCard(QFrame):
             bits.append(f"took {fmt_eta(job.finished - job.started)}")
         return "  ·  ".join(bits)
 
+    def _temp_size(self, job) -> int:
+        import time
+        now = time.monotonic()
+        if now - getattr(self, "_tmp_t", 0.0) < 3 and getattr(self, "_tmp_st", None) == job.status:
+            return self._tmp_n
+        self._tmp_t, self._tmp_st = now, job.status
+        self._tmp_n = dir_size(job.plan.get("tmp"))
+        return self._tmp_n
+
     def update_job(self, job: Job) -> None:
         st = job.status
         self.title.setText(clip(job.label, 70)); self.title.setToolTip(job.label)
@@ -159,7 +183,11 @@ class JobCard(QFrame):
             parts = [f"{job.progress * 100:.0f}% done · resumes here"]
         else:
             parts = []
+        tb = self._temp_size(job)
+        if tb > 0:
+            parts.append(f"temp {fmt_size(tb)}")
         self.metrics.setText("  ·  ".join(p for p in parts if p))
+        self.metrics.setToolTip(f"Temporary files: {job.plan.get('tmp')}" if tb > 0 else "")
         self.metrics.setVisible(bool(self.metrics.text()))
         self.play_btn.setVisible(st == Status.DONE)
         self.folder_btn.setVisible(st == Status.DONE)

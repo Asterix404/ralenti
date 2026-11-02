@@ -43,6 +43,7 @@ class Settings:
     sidebar_collapsed: bool = False
     name_template: str = ""
     edit_preset_noconfirm: bool = False
+    summary_collapsed: bool = False
     recent_out_dirs: str = ""
     concurrency: str = "auto"
     last_version: str = ""

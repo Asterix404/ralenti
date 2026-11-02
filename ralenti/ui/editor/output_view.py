@@ -21,7 +21,7 @@ from .workspaces import _mb
 
 VIDEO = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".ts", ".mts", ".m2ts", ".wmv", ".flv"}
 MAX_ITEMS = 2000
-_NUMBERED = re.compile(r"^(.*) $$(\d+)$$(\.[^.]+)$")
+_NUMBERED = re.compile(r"^(.*) [(](\d+)[)](\.[^.]+)$")   # "name (1).mp4"
 
 
 def _size_txt(n) -> str:

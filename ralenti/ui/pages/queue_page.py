@@ -86,8 +86,8 @@ class QueuePage(QWidget):
         root = QVBoxLayout(self); root.setContentsMargins(28, 22, 28, 14); root.setSpacing(12)
 
         head = QHBoxLayout(); head.setSpacing(8)
-        head.addWidget(page_header("Queue", "Jobs run one after another. Failed jobs resume from the "
-                                   "step that failed."), 1)
+        head.addWidget(page_header("Queue", "Jobs run in order, several at once when your GPU has room. Stopped "
+                                   "or failed jobs resume where they left off."), 1)
         whenbox = QVBoxLayout(); whenbox.setSpacing(4)
         lbl = QLabel("WHEN DONE"); lbl.setObjectName("FieldLabel")
         self.when = RichCombo(popup_width=380); self.when.setMinimumWidth(170)
@@ -209,6 +209,10 @@ class QueuePage(QWidget):
                 bits.append("Estimating time…")
         if failed:
             bits.append(f"{failed} failed")
+        from ..widgets.job_card import fmt_size
+        tmp_total = sum(getattr(c, "_tmp_n", 0) for c in self.cards.values())
+        if tmp_total > 1e7:
+            bits.append(f"temp {fmt_size(tmp_total)}")
         bits.append(f"{frac * 100:.0f}%")
         self.ov_title.setText(title)
         self.ov_detail.setText("  ·  ".join(bits))
@@ -242,6 +246,26 @@ class QueuePage(QWidget):
                 os.startfile(job.output)
             else:
                 notify(self, "The output file was moved or deleted", "warn")
+        elif key == "temp":
+            tmp = job.plan.get("tmp")
+            if tmp and os.path.isdir(tmp):
+                os.startfile(tmp)
+            else:
+                notify(self, "This job has no temporary files right now", "info")
+        elif key == "cleartemp":
+            if self.qm._run_of(job_id):
+                notify(self, "Stop the job first (its menu › Stop job)", "warn")
+            elif QMessageBox.question(self, "Ralenti", "Delete this job's temporary files? Its progress is lost: it "
+                                      "starts over the next time it runs.") == QMessageBox.StandardButton.Yes:
+                from ...core import pipeline
+                pipeline.cleanup_temp(job)
+                if job.status != Status.DONE:
+                    job.reset(full=True)
+                self.qm.save()
+                if job_id in self.cards:
+                    self.cards[job_id]._tmp_t = 0.0
+                    self.cards[job_id].update_job(job)
+                notify(self, "Temporary files deleted", "ok")
         elif key == "copy":
             QApplication.clipboard().setText(job.output)
             notify(self, "Output path copied", "ok")

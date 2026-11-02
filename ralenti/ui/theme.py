@@ -280,6 +280,18 @@ QTreeWidget#FolderView::item:hover {{ background: {SURFACE3}; }}
 QTreeWidget#FolderView::item:selected {{ background: {soft}; }}
 QHeaderView::section {{ background: {SURFACE2}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER};
     padding: 4px 6px; font-size: 8pt; font-weight: 700; }}
+QFrame#IssueBox {{ background: transparent; }}
+QFrame#Issue {{ background: {_rgba(WARN, 18)}; border: 1px solid {_rgba(WARN, 80)}; border-radius: 10px; }}
+QFrame#Issue[level="error"] {{ background: {_rgba(DANGER, 20)}; border-color: {_rgba(DANGER, 110)}; }}
+QFrame#Issue QLabel {{ background: transparent; color: {TEXT}; }}
+QPushButton#FixBtn {{ background: {SURFACE2}; border: 1px solid {BORDER}; border-radius: 7px; padding: 3px 10px;
+    font-size: 9pt; font-weight: 600; }}
+QPushButton#FixBtn:hover {{ border-color: {a}; color: {a}; }}
+QFrame#OffRow {{ background: {SURFACE2}; border: 1px dashed {BORDER}; border-radius: 10px; }}
+QFrame#OffRow QLabel {{ background: transparent; color: {MUTED}; }}
+QPushButton#SumHead {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED};
+    font-size: 8pt; font-weight: 700; }}
+QPushButton#SumHead:hover {{ color: {TEXT}; }}
 """
 
 

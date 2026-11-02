@@ -1,6 +1,8 @@
-"""Tool rows under the player (one per step) and the 'applied before this step' chips."""
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QToolButton, QWidget
+"""Tool rows under the player (one per step) and the 'applied' chips. A tool row shrinks its buttons to icons when it
+doesn't fit, instead of squeezing them."""
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QToolButton, QWidget
+from shiboken6 import isValid
 
 from ...core.edit import LABELS
 from ..icons import icon
@@ -26,10 +28,13 @@ class ToolRow(QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName("ToolRow")
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.h = QHBoxLayout(self); self.h.setContentsMargins(6, 4, 8, 4); self.h.setSpacing(2)
+        self.h.setSizeConstraint(QLayout.SetNoConstraint)
         self.note = QLabel(); self.note.setObjectName("Hint")
         self.note.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.note.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._compact, self._full = False, 0
 
     def add(self, *ws) -> None:
         for w in ws:
@@ -42,6 +47,34 @@ class ToolRow(QFrame):
     def finish(self) -> None:
         self.h.addWidget(self.note, 1)
 
+    # ---------- responsive: labels become icons when the row is too narrow ----------
+    def _labelled(self):
+        return [b for b in self.findChildren(QToolButton)
+                if b.objectName() == "ToolBtn" and b.text() and not b.icon().isNull()]
+
+    def _fit(self) -> None:
+        if not isValid(self) or not self.isVisible():
+            return
+        w = self.width()
+        if not self._compact and self.sizeHint().width() > w:
+            self._full = self.sizeHint().width()
+            self._set_compact(True)
+        elif self._compact and w >= self._full + 8:
+            self._set_compact(False)
+
+    def _set_compact(self, on: bool) -> None:
+        self._compact = on
+        for b in self._labelled():
+            b.setToolButtonStyle(Qt.ToolButtonIconOnly if on else Qt.ToolButtonTextBesideIcon)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        QTimer.singleShot(0, self._fit)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._fit)
+
 
 class AppliedChips(QWidget):
     clicked = Signal(str)
@@ -50,7 +83,7 @@ class AppliedChips(QWidget):
         super().__init__()
         self.h = QHBoxLayout(self); self.h.setContentsMargins(2, 0, 0, 0); self.h.setSpacing(6)
         lab = QLabel("APPLIED"); lab.setObjectName("FieldLabel")
-        lab.setToolTip("What the steps before this one already do. The picture shows it.")
+        lab.setToolTip("What the other steps already do. The picture shows it.")
         self.h.addWidget(lab); self.h.addStretch(1)
         self._btns = []
         self.hide()

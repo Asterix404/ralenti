@@ -1,4 +1,6 @@
-"""The six step pages. Each reads from and writes to the shared EditSession."""
+"""The six step pages. Each reads from and writes to the shared EditSession. Every page shows its own problems with
+fix buttons at the top; Transform and Interpolation are dimmed with a Turn on button while they're off; options that
+can't work with the current settings are greyed out with the reason."""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QVBoxLayout, QWidget)
@@ -6,15 +8,17 @@ from shiboken6 import isValid
 
 from ...core.audio_out import CODECS, QUALITIES, auto_codec, bytes_per_second, fits
 from ...core.cropdetect import detect_crop
+from ...core.edit import VIDEO_CONTAINERS
 from ...core.encoders import ENCODERS
 from ...core.engines import available_engines, engine_for, engines, resolve_model
+from ...core.merge import compat_issues
 from ...core.naming import PLACEHOLDERS
 from ...core.segments import segments, to_cuts
 from ...core.space import BPP
 from ...core.transform import output_size
 from ..icons import icon
 from ..util import fmt_ts, notify
-from ..widgets.choice import NiceCombo, RichCombo
+from ..widgets.choice import TAG, NiceCombo, RichCombo
 from ..widgets.fields import Field, button
 from ..widgets.panel import OutputField
 from ..widgets.pickers import QualityPicker, SlowmoPicker, VmafPicker
@@ -22,6 +26,7 @@ from ..widgets.segmented import Segmented
 from ..widgets.warn import WarnRow
 from ..workers import run_async
 from .summary import analyse, dur, preview_output
+from .widgets import IssueBox
 
 FPS = {
     "keep": ("keep", 0.0, "Keep source frame rate", "All new frames go into slow motion. The natural choice with slow-mo."),
@@ -39,10 +44,13 @@ SIZES = [("Original", (1.0, 0), "Keep the size"), ("2160p", (1.0, 2160), "Fit wi
 AUDIO_MODES = [
     ("auto", "Auto", "Recommended", "Copies the original when nothing changes it; otherwise converts it to a codec "
                                     "that suits the output. Audio is a tiny part of the file, so quality comes first."),
-    ("copy", "Keep original", "", "Copies the sound untouched whenever possible (not with slow motion)."),
+    ("copy", "Keep original", "", "Copies the sound untouched. Not possible with slow motion."),
     ("convert", "Convert", "", "Choose the codec and quality yourself."),
     ("remove", "Remove", "", "No sound in the output."),
 ]
+CONTAINERS = [("Auto", "auto", "The best container for the encoder"), ("MP4", "mp4", "Plays everywhere"),
+              ("MKV", "mkv", "Holds every codec and several audio tracks"),
+              ("MOV", "mov", "For editing apps (ProRes, PCM audio)")]
 
 
 def apply_q(qp, enc, q) -> None:
@@ -62,14 +70,44 @@ def hint(text: str = "") -> QLabel:
     return lb
 
 
+def lock(btn, ok: bool, tip: str, why: str, keep: bool = False) -> None:
+    """Greys out an option that can't work, unless it's the one selected (then the conflict explains it)."""
+    btn.setEnabled(ok or keep)
+    btn.setToolTip(tip if ok else f"Not possible: {why}")
+
+
 class Panel(QWidget):
     step = ""
+    GROUPS = ()          # (label, key, tooltip): shown as tabs above the panel
+    OFF_TEXT = ""        # a step that can be off: dimmed with a Turn on button
 
     def __init__(self, session):
         super().__init__()
-        self.s, self._loading = session, False
+        self.s, self._loading, self.groups, self.cur_group = session, False, {}, None
         self.setObjectName("OptionsBody"); self.setAttribute(Qt.WA_StyledBackground)
         self.v = QVBoxLayout(self); self.v.setContentsMargins(18, 12, 18, 16); self.v.setSpacing(14)
+        self.issues = IssueBox()
+        self.v.addWidget(self.issues)
+        self.off = None
+        if self.OFF_TEXT:
+            self.off = WarnRow(self.OFF_TEXT, "Turn on", lambda: isValid(self.s) and self.s.set(self.step, on=True))
+            self.off.setObjectName("OffRow")
+            self.v.addWidget(self.off)
+            self.off.hide()
+
+    def group(self, key: str) -> QVBoxLayout:
+        w = QWidget(); lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(14)
+        self.v.addWidget(w)
+        self.groups[key] = w
+        return lay
+
+    def show_group(self, key: str) -> None:
+        self.cur_group = key
+        for k, w in self.groups.items():
+            w.setVisible(k == key)
+
+    def tab_dots(self, e) -> dict:
+        return {}
 
     def _set(self, **kw) -> None:
         if not self._loading and isValid(self.s):
@@ -81,6 +119,13 @@ class Panel(QWidget):
             self._load(e)
         finally:
             self._loading = False
+        if self.off is not None:
+            on = bool(getattr(e, self.step).get("on"))
+            self.off.setVisible(bool(e.clips) and not on)
+            for i in range(self.v.count()):
+                w = self.v.itemAt(i).widget()
+                if w is not None and w not in (self.issues, self.off):
+                    w.setEnabled(on or not e.clips)
 
     def _load(self, e) -> None:
         pass
@@ -180,11 +225,16 @@ class TrimPanel(Panel):
 # ============================== Transform ==============================
 class CropPanel(Panel):
     step = "crop"
+    GROUPS = (("Crop", "crop", "Crop the picture or remove black bars"),
+              ("Rotate & flip", "rotate", "Turn or mirror the picture"),
+              ("Size", "size", "Make the output smaller"))
+    OFF_TEXT = "Transform is off: the picture is kept as it is."
     draw_toggled = Signal(bool)
     ratio_changed = Signal(object)
 
     def __init__(self, s):
         super().__init__(s)
+        g = self.group("crop")
         self.mode = RichCombo()
         for key, title, tag, blurb in (
                 ("auto", "Auto-detect black bars", "Recommended", "Removes letterbox and pillarbox bars."),
@@ -192,30 +242,41 @@ class CropPanel(Panel):
                 ("custom", "Custom", "", "Draw the crop on the video.")):
             self.mode.add(title, key, blurb, tag)
         self.mode.currentIndexChanged.connect(self._mode)
-        self.v.addWidget(Field("Crop", self.mode))
+        g.addWidget(Field("Crop", self.mode))
         self.detect = button("Detect bars", self._detect, icon="magic-wand")
-        self.v.addWidget(self._row(self.detect))
-        self.v.addWidget(hint("Rotate, flip and draw the crop with the tools under the player. The picture shows "
-                              "the result live, here and on every step after this one."))
+        g.addWidget(self._row(self.detect))
         self.ratio = NiceCombo()
         for label, r in RATIOS:
             self.ratio.addItem(label, r)
         self.ratio.currentIndexChanged.connect(lambda *_: self.ratio_changed.emit(self.ratio.currentData()))
-        self.v.addWidget(Field("Crop shape", self.ratio))
+        g.addWidget(Field("Crop shape", self.ratio))
+        g.addWidget(hint("Draw the crop with Draw crop under the player (D). The picture shows the result live, "
+                         "here and on every other step."))
+        g = self.group("rotate")
         self.rot = Segmented([("0°", 0, "No rotation"), ("90°", 90, "Clockwise"), ("180°", 180, "Upside down"),
                               ("270°", 270, "Counter-clockwise")])
         self.rot.changed.connect(lambda v: self._set(on=True, rotate=v))
-        self.v.addWidget(Field("Rotate", self.rot, "For phone videos recorded sideways, for example."))
+        g.addWidget(Field("Rotate", self.rot, "For phone videos recorded sideways, for example."))
         self.hf, self.vf = QPushButton("Flip horizontally"), QPushButton("Flip vertically")
         for b, key in ((self.hf, "hflip"), (self.vf, "vflip")):
             b.setCheckable(True)
             b.toggled.connect(lambda on, k=key: self._set(on=True, **{k: on}))
-        self.v.addWidget(Field("Flip", self._row(self.hf, self.vf)))
+        g.addWidget(Field("Flip", self._row(self.hf, self.vf)))
+        g.addWidget(hint("Shortcuts: R and Shift+R rotate, H and V flip, B shows the untouched source."))
+        g = self.group("size")
         self.size = Segmented(list(SIZES))
         self.size.changed.connect(lambda v: self._set(on=True, scale=v[0], max_h=v[1]))
-        self.v.addWidget(Field("Output size", self.size, "Smaller sizes also make the AI faster."))
+        g.addWidget(Field("Output size", self.size, "Smaller sizes also make the AI faster."))
         self.result = hint(); self.result.setTextFormat(Qt.RichText)
         self.v.addWidget(self.result); self.v.addStretch(1)
+        self.show_group("crop")
+
+    def tab_dots(self, e) -> dict:
+        c = e.crop
+        on = bool(c.get("on"))
+        return {"crop": on and (isinstance(c.get("crop"), list) or c.get("crop") == "auto"),
+                "rotate": on and bool(int(c.get("rotate") or 0) % 360 or c.get("hflip") or c.get("vflip")),
+                "size": on and (float(c.get("scale") or 1) < 0.999 or bool(c.get("max_h")))}
 
     def _mode(self, *_) -> None:
         m = self.mode.currentData()
@@ -265,27 +326,34 @@ class CropPanel(Panel):
 # ============================== Interpolation ==============================
 class MotionPanel(Panel):
     step = "motion"
+    GROUPS = (("Motion", "motion", "Slow motion, frame rate and scene cuts"),
+              ("Engine", "engine", "The AI model and its options"))
+    OFF_TEXT = "Interpolation is off: no AI, the video keeps its speed and frame rate."
 
     def __init__(self, s):
         super().__init__(s)
-        self.model = RichCombo(); self.model.currentIndexChanged.connect(self._model)
-        self.v.addWidget(Field("AI model", self.model))
-        self.engine_warn = WarnRow("No AI engine yet. RIFE is free and open source, and installs in one click.",
-                                   "Get RIFE (free)", lambda: self.window().go_downloads())
-        self.v.addWidget(self.engine_warn)
+        g = self.group("motion")
         self.slow = SlowmoPicker(); self.slow.changed.connect(lambda v: self._set(on=True, slowmo=float(v)))
         self.slow_field = Field("Slow motion", self.slow)
-        self.v.addWidget(self.slow_field)
+        g.addWidget(self.slow_field)
         self.fps = RichCombo()
         for key, (_m, _v, title, blurb) in FPS.items():
             self.fps.add(title, key, blurb)
         self.fps.currentIndexChanged.connect(self._fps)
-        self.v.addWidget(Field("Frame rate", self.fps))
+        g.addWidget(Field("Frame rate", self.fps))
         self.scene = Segmented([("Off", "off", "Interpolate straight through every cut"),
                                 ("Normal", "normal", "Detect clear cuts between shots"),
                                 ("Sensitive", "sensitive", "Also catch softer cuts")])
         self.scene.changed.connect(lambda v: self._set(on=True, scene=v))
-        self.v.addWidget(Field("Scene cuts", self.scene, "Never blends one shot into the next. Works with every engine."))
+        g.addWidget(Field("Scene cuts", self.scene, "Never blends one shot into the next. Works with every engine."))
+        g.addWidget(hint("Preview a few seconds with Preview under the player (P). Previews follow your trim, crop "
+                         "and rotation. Compare them in the Previews tab and in the player."))
+        g = self.group("engine")
+        self.model = RichCombo(); self.model.currentIndexChanged.connect(self._model)
+        g.addWidget(Field("AI model", self.model))
+        self.engine_warn = WarnRow("No AI engine yet. RIFE is free and open source, and installs in one click.",
+                                   "Get RIFE (free)", lambda: self.window().go_downloads())
+        g.addWidget(self.engine_warn)
         self.opts = {}
         for eng in engines():
             rows = []
@@ -293,11 +361,10 @@ class MotionPanel(Panel):
                 seg = Segmented(list(opt.choices)); seg.set_value(opt.default)
                 seg.changed.connect(lambda _v: self._set(on=True, engine_opts=self._engine_opts()))
                 f = Field(opt.title, seg, opt.hint)
-                self.v.addWidget(f); rows.append((opt, seg, f))
+                g.addWidget(f); rows.append((opt, seg, f))
             self.opts[eng.key] = rows
-        self.v.addWidget(hint("Preview a few seconds with Preview under the player (P). Previews follow your "
-                              "trim, crop and rotation. Compare them in the Previews tab and in the player."))
         self.v.addStretch(1)
+        self.show_group("motion")
         self.reload_options()
 
     def reload_options(self) -> None:
@@ -395,26 +462,41 @@ class AudioPanel(Panel):
         self.v.addStretch(1)
 
     def _load(self, e) -> None:
-        a, an = e.audio, analyse(self.s)
-        self.mode.select(a.get("mode") or "auto")
+        a, an, tc = e.audio, analyse(self.s), self.s.qm.tc
+        mode = a.get("mode") or "auto"
+        self.mode.select(mode)
+        slow = bool(an) and an["motion"] and an["slow"] != 1
+        i = self.mode.findData("copy")
+        item = self.mode.model().item(i) if hasattr(self.mode.model(), "item") else None
+        if item is not None:
+            item.setEnabled(not slow or mode == "copy")
+        self.mode.setItemData(i, "Not with slow motion" if slow else "", TAG)
         ext = an["ext"] if an else ".mp4"
+        cur = a.get("codec")
         self.codec.clear()
         for key, c in CODECS.items():
-            self.codec.add(c["label"], key, c["blurb"], f"Fits {ext}" if fits(key, ext) else f"Not in {ext}")
-        if not self.codec.select(a.get("codec")):
+            if key == "opus" and not tc.binary_for("libopus") and cur != "opus":
+                continue
+            ok = fits(key, ext)
+            self.codec.add(c["label"], key, c["blurb"], f"Fits {ext}" if ok else f"Not in {ext}")
+            if not ok and key != cur:
+                it = self.codec.model().item(self.codec.count() - 1) if hasattr(self.codec.model(), "item") else None
+                if it is not None:
+                    it.setEnabled(False)
+        if not self.codec.select(cur):
             self.codec.select(auto_codec(ext, e.encode.get("encoder") or ""))
         self.quality.set_value(a.get("quality") or "high")
         self.slow.set_value(a.get("slow") or "natural")
-        convert = a.get("mode") == "convert"
+        convert = mode == "convert"
         self.codec_field.setVisible(convert)
         self.q_field.setVisible(convert and self.codec.currentData() in ("aac", "opus", "pcm"))
-        self.slow_field.setVisible(bool(an) and an["motion"] and an["slow"] != 1 and a.get("mode") != "remove")
+        self.slow_field.setVisible(slow and mode != "remove")
         if not an:
             self.plan.setText("Open a video first."); self.warn.hide(); self.size.setText("")
             return
         p = an["aplan"]
         self.plan.setText(f"<b>{p['label']}</b>")
-        self.warn.label.setText(p.get("warning") or ""); self.warn.setVisible(bool(p.get("warning")))
+        self.warn.hide()
         bps, enc = bytes_per_second(p, an["info"]), an["enc"]
         if bps is None or an["copy"] or not enc:
             self.size.setText("Audio is a tiny part of a video file, so it's kept at high quality.")
@@ -430,56 +512,79 @@ class AudioPanel(Panel):
 # ============================== Encode ==============================
 class EncodePanel(Panel):
     step = "encode"
+    GROUPS = (("Video", "video", "Copy or re-encode, and the encoder"),
+              ("Quality", "quality", "How good the encode looks"))
 
     def __init__(self, s):
         super().__init__(s)
+        g = self.group("video")
         self.video = Segmented([("Re-encode", "encode", "Encode the video with the settings below"),
-                                ("Copy", "copy", "No re-encode: instant and lossless, when nothing changes the picture")])
+                                ("Copy", "copy", "No re-encode: instant and lossless")])
         self.video.changed.connect(lambda v: self._set(video=v))
-        self.v.addWidget(Field("Video", self.video))
+        g.addWidget(Field("Video", self.video))
         self.copy_note = hint()
-        self.v.addWidget(self.copy_note)
-        self.enc_box = QWidget(); ev = QVBoxLayout(self.enc_box); ev.setContentsMargins(0, 0, 0, 0); ev.setSpacing(14)
+        g.addWidget(self.copy_note)
         self.encoder = RichCombo()
         self.encoder.currentIndexChanged.connect(
             lambda *_: self.encoder.currentData() and self._set(encoder=self.encoder.currentData()))
-        ev.addWidget(Field("Encoder", self.encoder))
+        self.enc_field = Field("Encoder", self.encoder)
+        g.addWidget(self.enc_field)
+        g = self.group("quality")
+        self.q_box = QWidget(); qv = QVBoxLayout(self.q_box); qv.setContentsMargins(0, 0, 0, 0); qv.setSpacing(14)
         self.vmaf = VmafPicker(); self.vmaf.changed.connect(lambda _v: self._set(vmaf=self.vmaf.value()))
-        ev.addWidget(Field("Quality", self.vmaf))
+        qv.addWidget(Field("Quality", self.vmaf))
         self.quality = QualityPicker(); self.quality.changed.connect(lambda v: self._set(q=v))
         self.q_field = Field("Constant quality level", self.quality)
-        ev.addWidget(self.q_field)
-        self.v.addWidget(self.enc_box)
-        self.v.addWidget(hint("Estimates, a comparison of the encoders and a quality test are in the workspace next to this panel."))
+        qv.addWidget(self.q_field)
+        g.addWidget(self.q_box)
+        self.q_note = hint("Copy keeps the original picture, so there's no quality to set.")
+        g.addWidget(self.q_note)
+        self.v.addWidget(hint("Estimates, a comparison of the encoders and a quality test are in the workspace next "
+                              "to this panel."))
         self.v.addStretch(1)
+        self.show_group("video")
         self.reload_options()
+
+    def tab_dots(self, e) -> dict:
+        return {"video": e.encode.get("video") == "copy"}
 
     def reload_options(self) -> None:
         tc = self.s.qm.tc
         self._loading = True
         try:
             self.encoder.clear()
-            for key, e in ENCODERS.items():
-                if not e.hidden and tc.binary_for(e.codec):
-                    self.encoder.add(e.label, key, e.blurb, e.tag)
+            for key, x in ENCODERS.items():
+                if not x.hidden and tc.binary_for(x.codec):
+                    self.encoder.add(x.label, key, x.blurb, x.tag)
         finally:
             self._loading = False
         self.load(self.s.edit)
 
     def _load(self, e) -> None:
         v, tc, an = e.encode, self.s.qm.tc, analyse(self.s)
-        self.video.set_value(v.get("video") or "encode")
-        possible = not e.motion.get("on") and not (an and an["filters"] and e.crop.get("on"))
-        copying = v.get("video") == "copy" and possible
-        if v.get("video") == "copy" and not possible:
-            self.copy_note.setText("Copy isn't possible with Interpolation or Transform on: the video is re-encoded "
-                                   "with the encoder below.")
-        elif copying:
+        chosen = v.get("video") or "encode"
+        self.video.set_value(chosen)
+        why = []
+        if e.motion.get("on"):
+            why.append("Interpolation is on")
+        if an and an["filters"] and e.crop.get("on"):
+            why.append("Transform changes the picture")
+        infos = [self.s.info(c) for c in e.clips] if e.clips else []
+        if len(infos) > 1 and compat_issues(infos):
+            why.append("the clips differ")
+        lock(self.video.group.button(1), not why, "No re-encode: instant and lossless", " and ".join(why) + ".",
+             keep=chosen == "copy")
+        copying = chosen == "copy" and not why
+        if copying:
             self.copy_note.setText("The video is copied as is: instant and lossless. Only Trim and Audio apply.")
+        elif why and chosen != "copy":
+            self.copy_note.setText("Copy isn't available: " + " and ".join(why) + ".")
         else:
             self.copy_note.setText("")
         self.copy_note.setVisible(bool(self.copy_note.text()))
-        self.enc_box.setVisible(not copying)
+        self.enc_field.setVisible(not copying)
+        self.q_box.setVisible(not copying)
+        self.q_note.setVisible(copying)
         if not self.encoder.select(v.get("encoder")):
             self.encoder.setCurrentIndex(0)
         enc = ENCODERS.get(self.encoder.currentData() or "")
@@ -501,6 +606,7 @@ class OutputPanel(Panel):
 
     def __init__(self, s):
         super().__init__(s)
+        self._auto = ""
         self.folder = OutputField("dir"); self.folder.changed.connect(lambda t: self._set(out_dir=t.strip()))
         self.v.addWidget(Field("Save to", self.folder, "Empty: next to the source file."))
         self.name = QLineEdit(); self.name.setPlaceholderText("Automatic: source name + settings")
@@ -515,24 +621,23 @@ class OutputPanel(Panel):
         name_box = QWidget(); nv = QVBoxLayout(name_box); nv.setContentsMargins(0, 0, 0, 0); nv.setSpacing(8)
         nv.addWidget(self.name); nv.addWidget(chips); nv.addWidget(self.preview)
         nv.addWidget(button("Use as default for new videos", self._default, "ghost", icon="star"))
-        self.v.addWidget(Field("File name", name_box, "Click a placeholder to insert it. The file is never "
+        self.v.addWidget(Field("File name", name_box, "Click a placeholder to insert it. In an empty field, it "
+                                                       "starts from the automatic name. The file is never "
                                                        "overwritten unless you choose so below."))
-        self.container = Segmented([("Auto", "auto", "The best container for the encoder"),
-                                    ("MP4", "mp4", "Plays everywhere"),
-                                    ("MKV", "mkv", "Holds every codec and several audio tracks"),
-                                    ("MOV", "mov", "For editing apps (ProRes, PCM audio)")])
+        self.container = Segmented(CONTAINERS)
         self.container.changed.connect(lambda v: self._set(container=v))
-        self.cont_note = hint()
-        self.v.addWidget(Field("Container", self.container)); self.v.addWidget(self.cont_note)
+        self.v.addWidget(Field("Container", self.container))
         self.exists = Segmented([("Add a number", "number", "Never replaces a file: adds (1), (2)…"),
                                  ("Overwrite", "overwrite", "Replaces a file with the same name")])
         self.exists.changed.connect(lambda v: self._set(exists=v))
         self.v.addWidget(Field("If the file exists", self.exists))
-        self.v.addWidget(hint("The folder view next to this panel shows where the file goes. Double-click a folder there to save in it."))
+        self.v.addWidget(hint("The folder view next to this panel shows where the file goes. Double-click a folder "
+                              "there to save in it."))
         self.v.addStretch(1)
 
     def _insert(self, k: str) -> None:
-        pos, t = self.name.cursorPosition(), self.name.text()
+        t = self.name.text() or self._auto
+        pos = self.name.cursorPosition() if self.name.text() else len(t)
         new = t[:pos] + "{" + k + "}" + t[pos:]
         self.name.setText(new)
         self.name.setCursorPosition(pos + len(k) + 2)
@@ -555,11 +660,26 @@ class OutputPanel(Panel):
         self.container.set_value(o.get("container") or "auto")
         self.exists.set_value(o.get("exists") or "number")
         an = analyse(self.s)
+        cur = o.get("container") or "auto"
+        enc = an["enc"] if an else None
+        for i, (_label, val, tip) in enumerate(CONTAINERS):
+            ok = val == "auto" or not an or an["copy"] or (enc is not None and val in VIDEO_CONTAINERS.get(enc.key,
+                                                                                                         {"mkv"}))
+            lock(self.container.group.button(i), ok, tip,
+                 f"{enc.label if enc else 'This encoder'} can't be stored in .{val}.", keep=cur == val)
         if an:
+            bits = ["{name}", "ralenti"]
+            if an["motion"]:
+                bits.append("{model}")
+            if an["slow"] != 1:
+                bits.append("slow{slowmo}x")
+            if an["vmaf"]:
+                bits.append("vmaf{vmaf}")
+            self._auto = "_".join(bits)
+            self.name.setPlaceholderText("Automatic: " + self._auto)
             p = preview_output(self.s, an)
             self.preview.setText(f"{p.name}\n{p.parent}")
-            self.cont_note.setText(an.get("ext_warn") or "")
         else:
+            self._auto = ""
+            self.name.setPlaceholderText("Automatic: source name + settings")
             self.preview.setText("Open a video to see the file name.")
-            self.cont_note.setText("")
-        self.cont_note.setVisible(bool(self.cont_note.text()))

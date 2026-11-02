@@ -146,3 +146,28 @@ def estimate_html(session, an):
     opts = dict(model=an["model"], fps_mode=m.get("fps_mode") or "keep", fps_value=m.get("fps_value") or 0,
                 slowmo=an["slow"], encoder=session.edit.encode.get("encoder"), vmaf=an["vmaf"])
     return describe(estimate(an["info"], opts, an["size"], None, an["dur"], session.qm.rates))
+
+
+
+# ===================== 0.14: problems with fixes =====================
+def issues(session, an) -> list[dict]:
+    from ...core.edit import conflicts
+    e = session.edit
+    infos = [session.info(c) for c in e.clips] if e.clips else None
+    out = conflicts(e, session.qm.tc, infos)
+    blocked = {c["step"] for c in out if c["level"] == "error"}
+    if an and an["aplan"].get("warning") and "audio" not in blocked:
+        out.append(dict(level="warning", step="audio", text=an["aplan"]["warning"], fixes=[]))
+    return out
+
+
+_rows_v13 = rows
+
+
+def rows(session, an) -> dict:
+    out = _rows_v13(session, an)
+    if an and session.edit.encode.get("video") == "copy" and not an["copy"]:
+        from .. import theme
+        out["encode"] = (f"<span style='color:{theme.DANGER}'><b>Copy</b> · not possible with these settings"
+                         f"</span>", True)
+    return out

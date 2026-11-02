@@ -55,7 +55,7 @@ class NavButton(QPushButton):
         super().paintEvent(e)
         if self.dot:
             p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
-            p.setPen(Qt.NoPen); p.setBrush(QColor(theme.ACCENT))
+            p.setPen(Qt.NoPen); p.setBrush(QColor(theme.DANGER if self.dot == "error" else theme.ACCENT))
             c = QPointF(self.width() - 22, self.height() / 2) if self.text() else QPointF(self.width() / 2 + 11, 11)
             p.drawEllipse(c, 3.5, 3.5)
 

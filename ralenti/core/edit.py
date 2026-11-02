@@ -236,8 +236,8 @@ def compile_job(tc, settings, edit: Edit) -> Job:
     motion = bool(m.get("on"))
     copy_video = v.get("video") == "copy" and not motion and not filters
     if copy_video and joined and not lossless_join:
-        copy_video = False
-        notes.append("The clips don't match, so they're converted and the video is re-encoded.")
+        raise ValueError("Copy can't join these clips: they differ in size, frame rate or format. Pick Re-encode "
+                         "in Encode.")
     overwrite = o.get("exists") == "overwrite"
     bw, bh = (crop[0], crop[1]) if isinstance(crop, list) else (info.width, info.height)
     size = output_size(bw, bh, rot, scale, max_h)
@@ -367,3 +367,99 @@ def compile_job(tc, settings, edit: Edit) -> Job:
         notes.append(aplan["warning"])
     job.state["notes"] = notes
     return job
+
+
+
+# ===================== 0.14: impossible settings block the queue instead of silently changing =====================
+from .audio_out import CODECS as _CODECS, fits as _fits  # noqa: E402
+
+
+def conflicts(e: Edit, tc, infos=None) -> list[dict]:
+    """Why the edit can't be queued as set ('error'), or what's worth knowing ('warning'). Each entry names the step
+    to fix and offers one-click fixes: (label, step, changes) or (label, 'go:<page>', None).
+    infos (one MediaInfo per clip) enables the checks that need the files."""
+    out: list[dict] = []
+
+    def add(level, step, text, *fixes):
+        out.append(dict(level=level, step=step, text=text, fixes=list(fixes)))
+
+    if not tc.ffmpeg:
+        add("error", "app", "FFmpeg is missing. It's required.", ("Get FFmpeg", "go:downloads", None))
+    if not e.clips:
+        add("error", "clips", "Open a video first.")
+        return out
+    t, m, v, a, o = e.trim, e.motion, e.encode, e.audio, e.output
+    if t.get("on") and not (t.get("cuts") or t.get("drop")) and t.get("start") is not None \
+            and t.get("end") is not None and float(t["end"]) <= float(t["start"]):
+        add("error", "trim", "The trim ends before it starts.",
+            ("Remove the trim", "trim", {"on": False, "start": None, "end": None}))
+    motion = bool(m.get("on"))
+    off_motion = ("Turn Interpolation off", "motion", {"on": False})
+    if motion:
+        if not resolve_model(tc, m.get("model")):
+            add("error", "motion", "No AI engine is installed.", ("Get RIFE (free)", "go:downloads", None),
+                off_motion)
+        elif float(m.get("slowmo") or 1) == 1 and (m.get("fps_mode") or "keep") == "keep":
+            add("error", "motion", "Nothing to interpolate: slow motion is off and the frame rate is kept.",
+                ("Slow motion 2×", "motion", {"slowmo": 2.0}), off_motion)
+    filters = _transform(e.crop)[6]
+    copy = v.get("video") == "copy"
+    joined = len(e.clips) > 1
+    mismatch = joined and bool(infos) and bool(compat_issues(infos))
+    reenc = ("Re-encode", "encode", {"video": "encode"})
+    if copy:
+        if motion:
+            add("error", "encode", "Copy can't be used with Interpolation: the new frames have to be encoded.",
+                reenc, off_motion)
+        if filters:
+            add("error", "encode", "Copy can't be used with Transform: a cropped, rotated or resized picture has to "
+                                   "be encoded.", reenc, ("Turn Transform off", "crop", {"on": False}))
+        if mismatch:
+            add("error", "encode", "Copy can't join these clips: they differ in size, frame rate or format.", reenc)
+    enc = None
+    if not copy:
+        enc = ENCODERS.get(v.get("encoder") or "")
+        avail = [k for k, x in ENCODERS.items() if not x.hidden and tc.binary_for(x.codec)]
+        alt = [(f"Use {ENCODERS[avail[0]].label}", "encode", {"encoder": avail[0]})] if avail else []
+        if enc is None or enc.hidden:
+            add("error", "encode", "Pick an encoder.", *alt)
+            enc = None
+        elif not tc.binary_for(enc.codec):
+            add("error", "encode", f"{enc.label} isn't available with your FFmpeg build.", *alt)
+            enc = None
+    cont = (o.get("container") or "auto").lower().lstrip(".")
+    if enc is not None and cont != "auto" and cont not in VIDEO_CONTAINERS.get(enc.key, {"mkv"}):
+        ok = sorted(VIDEO_CONTAINERS.get(enc.key, {"mkv"}))
+        add("error", "output", f"{enc.label} can't be stored in .{cont}.",
+            ("Auto container", "output", {"container": "auto"}),
+            *[(x.upper(), "output", {"container": x}) for x in ok[:2]])
+    copy_ok = copy and not motion and not filters and not mismatch
+    needs_mkv = joined or bool(t.get("on") and (t.get("cuts") or []))
+    ext, _w = pick_ext(e, None if copy_ok else enc, copy_ok, Path(e.clips[0]).suffix.lower(), needs_mkv)
+    mode = a.get("mode") or "auto"
+    slow = float(m.get("slowmo") or 1) if motion else 1.0
+    use_auto = ("Use Auto", "audio", {"mode": "auto"})
+    has_audio = infos is None or (bool(infos) and any(i.has_audio for i in infos))
+    if mode == "copy" and abs(slow - 1) > 1e-6 and has_audio:
+        add("error", "audio", "Keep original can't be used with slow motion: the sound has to be slowed down with "
+                              "the picture.", use_auto)
+    elif mode == "copy" and infos and infos[0].has_audio and not joined \
+            and not passthrough_ok(infos[0].acodec or "", ext):
+        fixes = [use_auto]
+        if copy_ok or (enc is not None and "mkv" in VIDEO_CONTAINERS.get(enc.key, {"mkv"})):
+            fixes.append(("MKV container", "output", {"container": "mkv"}))
+        add("error", "audio", f"The original {(infos[0].acodec or 'audio').upper()} sound can't be stored in {ext} "
+                              "as is.", *fixes)
+    if mode == "convert":
+        codec = a.get("codec") or "auto"
+        if codec in _CODECS and not _fits(codec, ext):
+            add("error", "audio", f"{_CODECS[codec]['label']} can't be stored in {ext}.",
+                ("Automatic codec", "audio", {"codec": "auto"}))
+        elif codec == "opus" and not tc.binary_for("libopus"):
+            add("error", "audio", "Your FFmpeg build has no Opus encoder.", ("Use AAC", "audio", {"codec": "aac"}))
+    return out
+
+
+def check(e: Edit, tc, infos=None) -> list[tuple[str, str]]:
+    """[(level, message)], level = 'error' (can't queue) or 'warning'."""
+    return [(c["level"], c["text"]) for c in conflicts(e, tc, infos)]

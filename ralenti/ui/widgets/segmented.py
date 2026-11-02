@@ -40,3 +40,27 @@ class Segmented(QFrame):
                 self.group.button(i).setChecked(True)
                 return True
         return False
+
+
+
+class Tabs(Segmented):
+    """Segmented used as tabs: labels can change, and a dot shows when something in a tab is set."""
+
+    def __init__(self, options):
+        super().__init__(options)
+        self._labels = {opt[1]: opt[0] for opt in options}
+        self._dots = {}
+
+    def _paint(self, key) -> None:
+        if key in self._values:
+            b = self.group.button(self._values.index(key))
+            b.setText(self._labels[key] + ("  •" if self._dots.get(key) else ""))
+
+    def set_label(self, key, text: str) -> None:
+        self._labels[key] = text
+        self._paint(key)
+
+    def set_dot(self, key, on: bool) -> None:
+        if self._dots.get(key) != bool(on):
+            self._dots[key] = bool(on)
+            self._paint(key)

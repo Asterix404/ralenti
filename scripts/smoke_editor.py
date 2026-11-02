@@ -263,6 +263,41 @@ def run(app, video):
                                                            ed.output_view.new_item.text(0) if ed.output_view.new_item
                                                            else "", "missing"))
 
+    # ---- 0.14 batch 5a: conflicts, greyed options, tabs, summary, transformed Trim ----
+    win.go("crop"); pump(app)
+    check("Transform has tabs", lambda: expect("crop" in ed.side_tabs, "yes", "no tabs"))
+    check("Rotate & flip tab", lambda: (ed._side_tab("crop", "rotate"), pump(app),
+                                        expect(not ed.panels["crop"].groups["rotate"].isHidden(), "shown", "hidden"),
+                                        ed._side_tab("crop", "crop"))[2])
+    ses.set("motion", on=True); ses.set("encode", video="copy"); pump(app, 10)
+    check("Copy + Interpolation is a conflict", lambda: expect(
+        any(i["step"] == "encode" and i["level"] == "error" for i in ed._issues), "blocked", str(ed._issues)))
+    check("Add to queue is blocked", lambda: expect(not ed.summary.btn.isEnabled(), ed.summary.btn.text(), "enabled"))
+    check("sidebar shows the problem", lambda: expect(ed.dots().get("encode") == "error", "red dot", str(ed.dots())))
+
+    def _refuses():
+        try:
+            compile_job(tc, s, ses.edit)
+        except ValueError as ex:
+            return str(ex)[:80]
+        raise AssertionError("compiled anyway")
+
+    check("compile_job refuses it", _refuses)
+    check("fix button: Re-encode", lambda: (ed._fix(("Re-encode", "encode", {"video": "encode"})), pump(app, 10),
+                                            expect(not any(i["level"] == "error" and i["step"] == "encode"
+                                                           for i in ed._issues), "fixed", str(ed._issues)))[2])
+    win.go("encode"); pump(app)
+    check("Copy greyed with Interpolation on", lambda: expect(
+        not ed.panels["encode"].video.group.button(1).isEnabled(), "greyed", "enabled"))
+    check("summary collapses", lambda: (ed.summary._toggle(), pump(app),
+                                        expect(ed.summary.body.isHidden(), "collapsed", "still open"),
+                                        ed.summary._toggle())[2])
+    ses.set("crop", on=True, rotate=90); win.go("trim"); pump(app)
+    check("Trim shows the rotated picture", lambda: expect(abs(ed.player.view.holder.transform().m11()) < 0.5,
+                                                           "rotated", "not rotated"))
+    check("Picture chip on Trim", lambda: expect(any(x[0] == "crop" for x in ed._chip_items),
+                                                 [x[2] for x in ed._chip_items], "missing"))
+
     def kinds():
         return [st.kind for st in compile_job(tc, s, ses.edit).steps]
 

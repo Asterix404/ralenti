@@ -20,7 +20,7 @@ from ..space_check import confirm_space
 from ..util import fmt_ts, notify
 from ..widgets.panel import options_scroll
 from ..widgets.player import PlayerPanel
-from ..widgets.segmented import Segmented
+from ..widgets.segmented import Segmented, Tabs
 from ..workers import run_async
 from .clips_bar import ClipsBar
 from .panels import RATIOS, AudioPanel, CropPanel, EncodePanel, MotionPanel, OutputPanel, TrimPanel
@@ -29,7 +29,7 @@ from .previews import Previews
 from .output_view import OutputView
 from .workspaces import AudioView, EncodeView
 from .session import EditSession
-from .summary import analyse, dur, estimate_html, messages, rows
+from .summary import analyse, dur, estimate_html, issues, messages, rows
 from .toolbars import AppliedChips, ToolRow, tool
 from .trim_view import SegmentBar
 from .widgets import StepSummary, ToggleSwitch
@@ -70,6 +70,7 @@ class EditorPage(QWidget):
         self.qm, self.settings = qm, settings
         self.step, self.cur_clip, self._what, self._pending = "motion", None, set(), False
         self._before, self._scenes, self._scene_busy, self._chip_items = False, {}, None, []
+        self._issues = []
         self.session = s = EditSession(qm)
         root = QVBoxLayout(self); root.setContentsMargins(28, 22, 28, 14); root.setSpacing(10)
 
@@ -108,7 +109,6 @@ class EditorPage(QWidget):
         self.previews = Previews(self)
         self._build_tools()
         self.cmp_row = self._compare_row()
-        p.add_row(self.cmp_row)
         p.add_row(self.tool_stack)
         self.trim_box = QWidget()
         tb = QVBoxLayout(self.trim_box); tb.setContentsMargins(0, 2, 0, 0); tb.setSpacing(4)
@@ -130,14 +130,18 @@ class EditorPage(QWidget):
         self.stack = QStackedWidget(); cl.addWidget(self.stack)
         self.panels = {"trim": TrimPanel(s), "crop": CropPanel(s), "motion": MotionPanel(s), "audio": AudioPanel(s),
                        "encode": EncodePanel(s), "output": OutputPanel(s)}
+        self.side_tabs = {}
         for key, panel in self.panels.items():
-            self.stack.addWidget(self._motion_side(panel) if key == "motion" else options_scroll(panel))
+            self.stack.addWidget(self._side_for(key, panel))
+            panel.issues.fix.connect(self._fix)
         self.panels["trim"].goto.connect(lambda t: self._goto(t, play=False))
         self.panels["crop"].draw_toggled.connect(self.c_draw.setChecked)
         self.panels["crop"].ratio_changed.connect(self._ratio)
-        self.summary = StepSummary()
+        self.summary = StepSummary(bool(getattr(settings, "summary_collapsed", False)))
         self.summary.step_clicked.connect(lambda k: self.window().go(k))
         self.summary.add_clicked.connect(self.queue)
+        self.summary.fix.connect(self._fix)
+        self.summary.collapsed_changed.connect(self._summary_collapsed)
         sv.addWidget(card, 1); sv.addWidget(self.summary)
         body.addWidget(self.side)
 
@@ -149,7 +153,7 @@ class EditorPage(QWidget):
                 ("Shift+R", lambda: self._on("crop", lambda: self._rotate(-90))),
                 ("H", lambda: self._on("crop", self.c_hf.toggle)), ("V", lambda: self._on("crop", self.c_vf.toggle)),
                 ("D", lambda: self._on("crop", self.c_draw.toggle)),
-                ("B", lambda: self.step != "trim" and self.c_before.toggle()),
+                ("B", lambda: self.c_before.toggle()),
                 ("S", lambda: self._on("motion", self._toggle_scene)),
                 ("P", lambda: self._on("motion", self.previews.render))]
         for k, fn in keys:
@@ -162,43 +166,59 @@ class EditorPage(QWidget):
         self._changed("all")
         self.show_step("motion")
 
-    # ---------- Interpolation side panel: Settings / Previews ----------
-    def _motion_side(self, panel) -> QWidget:
+    # ---------- side panels: tabs where a step has several groups ----------
+    def _side_for(self, key, panel) -> QWidget:
+        groups = list(panel.GROUPS)
+        if key == "motion":
+            groups.append(("Previews", "previews", "Rendered test takes: compare them in the player"))
+        if not groups:
+            return options_scroll(panel)
         w = QWidget(); w.setObjectName("OptionsBody"); w.setAttribute(Qt.WA_StyledBackground)
         v = QVBoxLayout(w); v.setContentsMargins(0, 12, 0, 0); v.setSpacing(8)
-        self.m_tabs = Segmented([("Settings", "settings", "How the AI interpolates this video"),
-                                 ("Previews", "previews", "Rendered test takes: compare them in the player")])
-        self.m_tabs.set_value("settings")
-        self.m_tabs.changed.connect(self._motion_tab)
-        tw = QWidget(); tl = QHBoxLayout(tw); tl.setContentsMargins(14, 0, 14, 0); tl.addWidget(self.m_tabs)
-        self.m_pages = QStackedWidget()
-        self.m_pages.addWidget(options_scroll(panel)); self.m_pages.addWidget(self.previews.panel)
-        v.addWidget(tw); v.addWidget(self.m_pages, 1)
+        tabs = Tabs(groups)
+        tw = QWidget(); tl = QHBoxLayout(tw); tl.setContentsMargins(14, 0, 14, 0); tl.addWidget(tabs)
+        stack = QStackedWidget(); stack.addWidget(options_scroll(panel))
+        if key == "motion":
+            stack.addWidget(self.previews.panel)
+            self.m_tabs, self.m_pages = tabs, stack
+        v.addWidget(tw); v.addWidget(stack, 1)
+        self.side_tabs[key] = (tabs, stack)
+        tabs.changed.connect(lambda k, key=key: self._side_tab(key, k))
+        self._side_tab(key, groups[0][1])
         return w
+
+    def _side_tab(self, step, k) -> None:
+        tabs, stack = self.side_tabs[step]
+        tabs.set_value(k)
+        if k == "previews":
+            stack.setCurrentIndex(1)
+        else:
+            stack.setCurrentIndex(0)
+            self.panels[step].show_group(k)
 
     def _motion_tab(self, v) -> None:
-        self.m_tabs.set_value(v)
-        self.m_pages.setCurrentIndex(1 if v == "previews" else 0)
+        self._side_tab("motion", {"settings": "motion"}.get(v, v))
 
     def show_previews_tab(self) -> None:
-        self._motion_tab("previews")
+        self._side_tab("motion", "previews")
 
     def set_preview_count(self, n: int) -> None:
-        if hasattr(self, "m_tabs"):
-            self.m_tabs.group.button(1).setText(f"Previews · {n}" if n else "Previews")
+        if "motion" in self.side_tabs:
+            self.side_tabs["motion"][0].set_label("previews", f"Previews · {n}" if n else "Previews")
+
+    def _sync_tab_dots(self) -> None:
+        e = self.session.edit
+        for key, (tabs, _stack) in self.side_tabs.items():
+            for k, on in self.panels[key].tab_dots(e).items():
+                tabs.set_dot(k, on)
 
     def _compare_row(self) -> QWidget:
-        """The player's compare controls on their own row (Interpolation only). Next to the play buttons, zoom
-        and volume they didn't fit, and Qt squeezed the speaker buttons to nothing."""
-        p = self.player
-        w = QFrame(); w.setObjectName("ToolRow")
-        h = QHBoxLayout(w); h.setContentsMargins(6, 4, 8, 4); h.setSpacing(6)
+        """The compare controls join Interpolation's tool row, on the right."""
+        p, r = self.player, self.rows["motion"]
         for x in (p.cmp, p.layout_seg, p.speed_btn):
             _detach(p.layout(), x)
-            h.addWidget(x)
-        h.addStretch(1)
-        w.hide()
-        return w
+            r.h.addWidget(x)
+        return r
 
     # ---------- tool rows ----------
     def _build_tools(self) -> None:
@@ -214,8 +234,10 @@ class EditorPage(QWidget):
         self.t_snap = tool("Snap", "crosshair-simple", "Snap cuts to keyframes: needed for exact lossless cuts "
                                                        "with Encode › Copy", checkable=True)
         self.t_snap.setChecked(True)
+        self.t_before = tool("Before", "eye", "Show the untouched source (B)", lambda on: self._set_before(on),
+                             checkable=True)
         r.add(self.t_cut); r.sep(); r.add(self.t_prev, self.t_next); r.sep(); r.add(self.t_keep); r.sep()
-        r.add(self.t_kept, self.t_snap); r.finish()
+        r.add(self.t_kept, self.t_snap); r.sep(); r.add(self.t_before); r.finish()
 
         r = self.rows["crop"]
         self.c_rl = tool("", "arrow-counter-clockwise", "Rotate left (Shift+R)", lambda: self._rotate(-90))
@@ -279,8 +301,13 @@ class EditorPage(QWidget):
         for b, k in ((self.c_hf, "hflip"), (self.c_vf, "vflip")):
             b.blockSignals(True); b.setChecked(bool(c.get("on") and c.get(k))); b.blockSignals(False)
         for b in (self.t_cut, self.t_kept, self.t_snap, self.c_rl, self.c_rr, self.c_hf, self.c_vf, self.c_draw,
-                  self.c_shape, self.c_reset, self.c_before, self.m_preview):
+                  self.c_shape, self.c_reset, self.c_before, self.t_before):
             b.setEnabled(has)
+        mon = has and bool(e.motion.get("on"))
+        self.m_preview.setEnabled(mon)
+        self.m_preview.setToolTip("Render a few seconds at the playhead with the current settings (P). Follows your "
+                                  "trim, crop and rotation." if mon else
+                                  "Interpolation is off: turn it on (top right) to preview it.")
         cuts = (to_cuts(e.trim, s.media().duration).get("cuts") or []) if has and e.trim.get("on") else []
         self.t_prev.setEnabled(bool(cuts)); self.t_next.setEnabled(bool(cuts))
         self.t_keep.setEnabled(has and len(self.segbar.segs) > 1)
@@ -309,6 +336,7 @@ class EditorPage(QWidget):
         self._head()
         self._sync_view()
         self._sync_chips(analyse(self.session))
+        self._sync_summary()
         if step == "motion":
             self._find_scenes()
         self._sync_marks()
@@ -343,9 +371,13 @@ class EditorPage(QWidget):
 
     def dots(self) -> dict:
         e = self.session.edit
-        return {"trim": bool(e.trim.get("on")), "crop": bool(e.crop.get("on")), "motion": bool(e.motion.get("on")),
-                "audio": (e.audio.get("mode") or "auto") != "auto", "encode": False,
-                "output": bool(e.output.get("name") or e.output.get("out_dir"))}
+        d = {"trim": bool(e.trim.get("on")), "crop": bool(e.crop.get("on")), "motion": bool(e.motion.get("on")),
+             "audio": (e.audio.get("mode") or "auto") != "auto", "encode": False,
+             "output": bool(e.output.get("name") or e.output.get("out_dir"))}
+        for i in self._issues:
+            if i["level"] == "error" and i["step"] in d:
+                d[i["step"]] = "error"
+        return d
 
     # ---------- chips ----------
     def _chips(self, an) -> list:
@@ -357,7 +389,7 @@ class EditorPage(QWidget):
             r = an["ranges"]
             out.append(("trim", "scissors", f"{len(r)} segments · {dur(an['dur'])}" if len(r) > 1
                         else f"Trimmed to {dur(an['dur'])}"))
-        if "crop" in before and e.crop.get("on") and an["filters"]:
+        if self.step != "crop" and e.crop.get("on") and an["filters"]:
             bits, c = [], an["crop"]
             if isinstance(c, list):
                 bits.append(f"Cropped {c[0]}×{c[1]}")
@@ -370,7 +402,8 @@ class EditorPage(QWidget):
             if an["vf"]:
                 bits.append("Flipped ↕")
             w, h = an["size"]
-            out.append(("crop", "crop", " · ".join(bits + [f"{w}×{h}"])))
+            out.append(("crop", "crop", ("Picture · " if "crop" not in before else "")
+                        + " · ".join(bits + [f"{w}×{h}"])))
         if "motion" in before and an["motion"]:
             fps = f"{float(an['fps'] or 0):.2f}".rstrip("0").rstrip(".")
             out.append(("motion", "sparkle", f"{an['slow']:g}× slower" if an["slow"] != 1 else f"{fps} fps"))
@@ -432,9 +465,11 @@ class EditorPage(QWidget):
         self._head()
         an = analyse(s)
         self._sync_chips(an)
-        msgs = messages(s, an)
-        self.summary.update_rows(rows(s, an), msgs, estimate_html(s, an),
-                                 bool(e.clips) and not any(lvl == "error" for lvl, _m in msgs))
+        self._issues = issues(s, an) if e.clips else []
+        for key, panel in self.panels.items():
+            panel.issues.set_issues([i for i in self._issues if i["step"] == key])
+        self._sync_tab_dots()
+        self._sync_summary(an)
         if self.step == "motion" and what & {"clips", "all", "motion"}:
             self._find_scenes()
         self._sync_marks()
@@ -542,7 +577,7 @@ class EditorPage(QWidget):
             return
         info, first = s.info(self.cur_clip), s.info(e.clips[0])
         c = e.crop
-        on = bool(c.get("on")) and self.step != "trim" and not self._before
+        on = bool(c.get("on")) and not self._before
         drawing = self.c_draw.isChecked() and self.step == "crop"
         crop = c.get("crop") if on else None
         same = info and first and (info.width, info.height) == (first.width, first.height)
@@ -640,6 +675,9 @@ class EditorPage(QWidget):
 
     def _set_before(self, on: bool) -> None:
         self._before = bool(on)
+        for b in (self.c_before, self.t_before):
+            if b.isChecked() != self._before:
+                b.blockSignals(True); b.setChecked(self._before); b.blockSignals(False)
         if on and self.c_draw.isChecked():
             self.c_draw.setChecked(False)
         self._sync_view()
@@ -727,13 +765,15 @@ class EditorPage(QWidget):
     def _update_scene_ui(self) -> None:
         e = self.session.edit
         level = e.motion.get("scene") or "normal"
-        ok = bool(e.clips) and self.cur_clip is not None and level != "off"
+        ok = bool(e.clips) and self.cur_clip is not None and level != "off" and bool(e.motion.get("on"))
         for b in (self.m_scene, self.m_prev, self.m_next, self.m_find):
             b.setEnabled(ok)
         note, found = self.rows["motion"].note, self._scene_key() in self._scenes
         self.m_find.setText("Find again" if found else "Find cuts")
         if not e.clips:
             note.setText("")
+        elif not e.motion.get("on"):
+            note.setText("Interpolation is off")
         elif level == "off":
             note.setText("Scene cuts are off in the panel")
         elif self._scene_busy:
@@ -797,6 +837,29 @@ class EditorPage(QWidget):
             self._head()
             self.chips.setVisible(bool(self._chip_items))
 
+    # ---------- problems ----------
+    def _sync_summary(self, an=None) -> None:
+        s, e = self.session, self.session.edit
+        if an is None:
+            an = analyse(s)
+        errs = [i for i in self._issues if i["level"] == "error"]
+        others = [i for i in self._issues if i["step"] != self.step]
+        self.summary.update_rows(rows(s, an), others, estimate_html(s, an), bool(e.clips) and not errs, len(errs))
+
+    def _fix(self, fx) -> None:
+        label, step, changes = fx
+        if step.startswith("go:"):
+            win = self.window()
+            if hasattr(win, "go"):
+                win.go(step[3:])
+            return
+        self.session.set(step, **(changes or {}))
+        notify(self, f"{label} · Ctrl+Z to undo", "ok")
+
+    def _summary_collapsed(self, on: bool) -> None:
+        self.settings.summary_collapsed = bool(on)
+        self.settings.save()
+
     def _remember_folder(self, d: str) -> None:
         st = self.settings
         rec = [x for x in (getattr(st, "recent_out_dirs", "") or "").splitlines() if x and x.lower() != d.lower()]
@@ -805,6 +868,10 @@ class EditorPage(QWidget):
 
     # ---------- queue ----------
     def queue(self) -> None:
+        errs = [i for i in self._issues if i["level"] == "error"]
+        if errs:
+            notify(self, errs[0]["text"], "error")
+            return
         if self.session.edit.motion.get("on") and not self.previews._engine_ok():
             return                      # the engine's own check (e.g. a license notice) said no
         try:
