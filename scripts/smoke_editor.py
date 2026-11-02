@@ -68,6 +68,7 @@ def hook(t, v, tb):
 
 
 def check(label, fn):
+    print(f"  ... {label}", flush=True)
     try:
         r = fn()
         results.append(("ok  ", label, "" if r is None else str(r)[:120]))
@@ -115,6 +116,8 @@ def run(app, video):
     has("QualityPicker attrs", pickers.QualityPicker(), ["seg", "custom", "_sync", "set_encoder"])
 
     from ralenti.ui.main_window import MainWindow
+    MainWindow._whats_new = lambda self: None                  # modal dialogs would block an offscreen test
+    MainWindow.check_updates = lambda self, manual=False: None
     win = check("MainWindow()", lambda: MainWindow(s, qm))
     if win is None:
         return
@@ -310,9 +313,26 @@ def main():
     patch_qtawesome()
     sys.excepthook = hook
     app = QApplication(sys.argv[:1])
+    import faulthandler
+    from PySide6.QtCore import QTimer
+    faulthandler.dump_traceback_later(int(os.environ.get("SMOKE_TIMEOUT", "300")), exit=True)
+
+    def close_modals():
+        w = QApplication.activeModalWidget()
+        if w is not None:
+            results.append(("FAIL", "a dialog opened and blocked the test", f"{type(w).__name__}: {w.windowTitle()}"))
+            print(f"  !!! closed a dialog: {type(w).__name__} '{w.windowTitle()}'", flush=True)
+            (w.reject if hasattr(w, "reject") else w.close)()
+
+    guard = QTimer(); guard.setInterval(300); guard.timeout.connect(close_modals); guard.start()
     from ralenti.ui.editor import session as session_mod
     autosave = Path(session_mod.AUTOSAVE)
+    disk_backup = autosave.with_name("editor.smoke-backup.json")
+    if disk_backup.exists():                  # a previous run was killed: put the edit back first
+        autosave.write_bytes(disk_backup.read_bytes())
     backup = autosave.read_bytes() if autosave.exists() else None
+    if backup is not None:
+        disk_backup.write_bytes(backup)
     try:
         run(app, sys.argv[1] if len(sys.argv) > 1 else None)
     except Exception:
@@ -322,6 +342,8 @@ def main():
             autosave.write_bytes(backup)
         elif autosave.exists():
             autosave.unlink()
+        disk_backup.unlink(missing_ok=True)
+        faulthandler.cancel_dump_traceback_later()
     report()
 
 

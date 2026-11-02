@@ -805,6 +805,8 @@ class EditorPage(QWidget):
 
     # ---------- queue ----------
     def queue(self) -> None:
+        if self.session.edit.motion.get("on") and not self.previews._engine_ok():
+            return                      # the engine's own check (e.g. a license notice) said no
         try:
             job = compile_job(self.qm.tc, self.settings, self.session.edit)
         except Exception as ex:
