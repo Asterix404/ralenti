@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.0 · 2026-11-02 · Ralenti 1.0
+### New
+- **Impossible settings are blocked, never silently changed**: options that can't work are greyed out with the reason, and a conflict marks the step with a red dot, explains it and offers one-click fixes. Add to queue waits until it's fixed.
+- **Zoom into the picture**: scroll to zoom around the cursor, drag to move, double-click to fit. Works while drawing a crop.
+- **Black bars are visible**: the area around the picture is patterned, auto crop is shown live, and on Transform the bars it removes are tinted red.
+- **Scene cuts on Trim**: snap cuts to keyframes, scene cuts or both, and **Split at scenes** cuts the video into its shots in one click.
+- **Audio player**: plays the sound of the edit (kept parts only), original or processed, switchable while it plays, with a playhead on the waveforms.
+- **Tabs** in the side panel (Transform, Interpolation, Encode) and a **collapsible summary**.
+- **File names**: self-labelled placeholders ({ai}, {frames}, {slow}, {target}) disappear when they don't apply; the automatic name is shown as a template.
+- **Queue**: each job shows its temporary files' size, with Open temp folder and Delete temp files.
+- Custom preview length (0.5 to 60 s).
+### Improved
+- Trim shows the rotated, flipped and cropped picture; Before (B) works on every step.
+- Steps that are off are dimmed with a Turn on button; changing a setting no longer turns a step on.
+- Tool rows shrink to icons when space is short; Interpolation's tools and compare controls share one row.
+- The timeline's zoom buttons are gone: scroll to zoom, double-click to show everything.
+- The Topaz license notice (extension) is also shown before queueing.
+### Fixed
+- The file name shown on Output now always matches the one the job uses.
+- The "a number is added" note on Output never appeared.
+
 ## 0.13.0 · 2026-11-01 · The editor
 ### New
 - **One editor in six steps**: Trim → Transform → Interpolation → Audio → Encode → Output. Each step shows the result of the steps before it, and one summary shows what the output will be.
