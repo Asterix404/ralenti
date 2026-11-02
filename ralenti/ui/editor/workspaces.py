@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QImage, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QImage, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from shiboken6 import isValid
@@ -21,13 +21,14 @@ from ...core.encoders import ENCODERS
 from ...core.estimate import estimate, load_bench
 from ...core.progress import fmt_eta
 from ...core.quality_test import Cancelled, picture_chain, run_test, size_factor
-from ...core.segments import kept_ranges
+from ...core.segments import kept_ranges, output_to_source, source_to_output
 from ...core.space import BPP
 from ...core.tools import run
 from ...core.tracks import audio_tracks
-from ...core.waveform import peaks
+from ...core.waveform import listen_cmd, peaks
 from .. import theme
-from ..util import fmt_ts, notify
+from ..icons import icon
+from ..util import fmt_ts, mono_font, notify
 from ..widgets.fields import button, v_scroll
 from ..widgets.segmented import Segmented
 from ..widgets.volume import VolumeControl
@@ -78,7 +79,7 @@ class Wave(QWidget):
         self.msg = "Reading the sound…"
         self.setMinimumHeight(70)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Click to move the playhead here")
+        self.setToolTip("Click or drag to move the playhead")
 
     def set_data(self, values, secs) -> None:
         self.peaks, self.secs = values, float(secs or 0)
@@ -133,6 +134,10 @@ class Wave(QWidget):
         if e.button() == Qt.LeftButton and self.width() > 2:
             self.clicked.emit(max(0.0, min(1.0, e.position().x() / self.width())) * self._span())
 
+    def mouseMoveEvent(self, e):
+        if e.buttons() & Qt.LeftButton and self.width() > 2:
+            self.clicked.emit(max(0.0, min(1.0, e.position().x() / self.width())) * self._span())
+
 
 class TrackRow(QFrame):
     toggled = Signal(int, bool)
@@ -161,12 +166,27 @@ class TrackRow(QFrame):
         v.addLayout(h); v.addWidget(self.wave)
 
 
+PLAYING = QMediaPlayer.PlayingState
+LOADED = (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.BufferingMedia, QMediaPlayer.EndOfMedia)
+
+
+def _ts(x: float) -> str:
+    m, s = divmod(max(0.0, float(x)), 60)
+    return f"{int(m)}:{s:04.1f}"
+
+
 class AudioView(QWidget):
+    """Every audio track with its waveform, and a player for the sound of the edit: only the kept parts, back to
+    back, original or processed (slowed like the output). Switch while it plays; the playhead moves on the waves."""
+
     def __init__(self, page):
         super().__init__()
         self.page, self.s = page, page.session
         self.rows, self._tracks, self._waves = [], {}, {}
-        self.sel, self._gen, self._playing = None, 0, None
+        self.sel, self._gen, self._ready, self._p = None, 0, None, None
+        self._kind, self._want, self._pending, self._resume = "orig", None, None, None
+        self._last, self._played = None, False
+        self.setFocusPolicy(Qt.StrongFocus)
         root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0)
         card = QFrame(); card.setObjectName("Card")
         cv = QVBoxLayout(card); cv.setContentsMargins(16, 14, 16, 14); cv.setSpacing(10)
@@ -182,22 +202,35 @@ class AudioView(QWidget):
         self.empty = _label(); self.empty.setAlignment(Qt.AlignCenter)
         cv.addWidget(self.scroll, 1); cv.addWidget(self.empty, 1)
         self.bar = ToolRow()
-        self.l_orig = tool("Original", "play-fill", "Listen to the original sound at the playhead", checkable=True)
-        self.l_proc = tool("Processed", "play-fill", "Listen to the sound as it comes out: slowed down with the "
-                                                    "pitch handled as chosen", checkable=True)
-        self.l_stop = tool("", "stop", "Stop", lambda: self.stop())
-        self.l_orig.clicked.connect(lambda: self._listen("orig"))
-        self.l_proc.clicked.connect(lambda: self._listen("proc"))
-        lab2 = QLabel("LISTEN"); lab2.setObjectName("FieldLabel")
-        self.bar.add(lab2); self.bar.h.addSpacing(6); self.bar.add(self.l_orig, self.l_proc, self.l_stop)
-        self.bar.finish()
+        self.b_play = tool("", "play-fill", "Play / pause the sound of the edit (Space)", lambda: self.toggle())
+        self.b_play.setFixedSize(34, 28)
+        self.clock = QLabel("0:00.0"); self.clock.setObjectName("Muted"); self.clock.setFont(mono_font(9))
+        self.which = Segmented([("Original", "orig", "The sound as it is in the source (A)"),
+                                ("Processed", "proc", "The sound as it comes out: slowed down with the pitch handled "
+                                                      "as chosen (A)")])
+        self.which.set_value("orig"); self.which.setFixedWidth(220)
+        self.which.changed.connect(self._switch)
+        self.b_loop = tool("", "arrow-clockwise", "Loop", checkable=True)
+        self.bar.add(self.b_play); self.bar.h.addSpacing(6); self.bar.add(self.clock); self.bar.sep()
+        self.bar.add(self.which); self.bar.h.addSpacing(4); self.bar.add(self.b_loop); self.bar.finish()
         self.plan = _label(); self.plan.setTextFormat(Qt.RichText)
         cv.addWidget(self.bar); cv.addWidget(self.plan)
         root.addWidget(card, 1)
-        self.mp = QMediaPlayer(self); self.out = QAudioOutput(self); self.mp.setAudioOutput(self.out)
-        self.mp.mediaStatusChanged.connect(self._status)
+        self.players = {}
+        for k in ("orig", "proc"):
+            mp, out = QMediaPlayer(self), QAudioOutput(self)
+            mp.setAudioOutput(out)
+            mp.mediaStatusChanged.connect(lambda st, k=k: self._status(k, st))
+            self.players[k] = mp
+        self.tick = QTimer(self); self.tick.setInterval(33); self.tick.timeout.connect(self._tick)
+        for key, fn in (("Space", self.toggle),
+                        ("A", lambda: self._switch("proc" if self._kind == "orig" else "orig")),
+                        ("Left", lambda: self._nudge(-5)), ("Right", lambda: self._nudge(5))):
+            sc = QShortcut(QKeySequence(key), self); sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(fn)
         page.player.player.positionChanged.connect(self._pos)
 
+    # ---------- tracks ----------
     def _tracks_of(self, clip):
         if clip not in self._tracks:
             self._tracks[clip] = audio_tracks(self.page.qm.tc.ffprobe, clip)
@@ -209,6 +242,10 @@ class AudioView(QWidget):
             w.hide()
         self.info.setText("")
         self.stop()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.setFocus()
 
     def refresh(self) -> None:
         if not isValid(self.s):
@@ -262,21 +299,34 @@ class AudioView(QWidget):
             _polish(r, "sel", (r.clip, r.n) == self.sel)
         n = len(entries)
         if multi:
-            self.info.setText(f"{n} clips · the first track of each is joined")
+            self.info.setText(f"{n} clips · the first track of each is joined · click a wave to pick what you hear")
         else:
             k = sum(1 for x in entries if x[3])
-            self.info.setText(f"{n} tracks · keeping {k}" if n > 1 else "One track")
+            self.info.setText(f"{n} tracks · keeping {k} · click a wave to pick what you hear" if n > 1
+                              else "One track")
+        p = self._plan()
+        key = self._key(p) if p else None
+        if self._ready is not None and key != self._ready:
+            self._halt(); self._ready = None; self._resume = None
+        self._p = p
+        drop = not p or p["drop"]
+        self.which.group.button(1).setEnabled(not drop)
+        if drop and self._kind == "proc":
+            self._kind = "orig"; self.which.set_value("orig")
         an = analyse(s)
         if an:
-            p = an["aplan"]
-            text = f"Result: <b>{p['label']}</b>"
+            ap = an["aplan"]
+            text = f"Result: <b>{ap['label']}</b>"
             if mode == "remove":
                 text += " · the output is silent. Change Sound in the panel to keep it."
-            if p.get("warning"):
-                text += f"<br><span style='color:{theme.WARN}'>{p['warning']}</span>"
             self.plan.setText(text)
-            self.l_proc.setEnabled(p["mode"] != "drop")
-        self._pos(self.page.player.player.position())
+        if self.tick.isActive():
+            self._tick()
+        else:
+            self._pos(self.page.player.player.position())
+            if p:
+                u = self._resume if self._resume is not None else self._from_video(p)
+                self._clock(u, output_to_source(u, p["ranges"]))
 
     def _wave(self, row) -> None:
         try:
@@ -320,16 +370,260 @@ class AudioView(QWidget):
             return
         self.s.set("audio", tracks=new)
 
+    # ---------- what is played ----------
+    def _plan(self):
+        s, e = self.s, self.s.edit
+        if not self.sel or not e.clips or self.sel[0] not in e.clips:
+            return None
+        clip, n = self.sel
+        info = s.info(clip)
+        if not info or not info.has_audio:
+            return None
+        kept = _local_kept(s, clip)
+        ranges = [(round(a, 3), round(b, 3)) for a, b in (kept if kept is not None else [(0.0, info.duration)])
+                  if b - a > 0.02]
+        if not ranges:
+            return None
+        an = analyse(s)
+        ap = an["aplan"] if an else {"mode": "drop"}
+        flt = ap.get("filter") if ap.get("mode") == "encode" else None
+        return dict(clip=clip, n=int(n), ranges=ranges, flt=flt, slow=float(an["slow"]) if an and flt else 1.0,
+                    drop=ap.get("mode") == "drop")
+
+    @staticmethod
+    def _key(p) -> str:
+        return json.dumps(p, sort_keys=True, default=str)
+
+    @staticmethod
+    def _total(p) -> float:
+        return sum(b - a for a, b in p["ranges"])
+
+    def _f(self, kind=None) -> float:
+        p = self._p
+        return p["slow"] if p and (kind or self._kind) == "proc" else 1.0
+
+    def _playing(self) -> bool:
+        return any(mp.playbackState() == PLAYING for mp in self.players.values())
+
+    def _cur_u(self) -> float:
+        return self.players[self._kind].position() / 1000 / self._f()
+
+    def _from_video(self, p) -> float:
+        page = self.page
+        t = page.player.source_position() if p["clip"] == page.cur_clip else 0.0
+        u = source_to_output(t, p["ranges"])
+        return 0.0 if u >= self._total(p) - 0.05 else u
+
+    def _icon(self, playing: bool) -> None:
+        self.b_play.setIcon(icon("pause-fill" if playing else "play-fill", "text", checked=None))
+
+    # ---------- transport ----------
+    def toggle(self) -> None:
+        if not isValid(self.s) or not self.isVisible():
+            return
+        if self._playing():
+            self._pause()
+            return
+        p = self._plan()
+        if p is None:
+            notify(self.page, "Nothing to play: this clip has no kept sound.", "info")
+            return
+        key = self._key(p)
+        u = self._resume if (self._resume is not None and self._ready == key) else self._from_video(p)
+        if self._ready != key:
+            self._want = u
+            self._render(p, key)
+            return
+        self._play_at(u)
+
+    def _play_at(self, u: float) -> None:
+        if not self._p:
+            return
+        u = max(0.0, min(u, self._total(self._p)))
+        for k, mp in self.players.items():
+            if k != self._kind:
+                mp.pause()
+        mp = self.players[self._kind]
+        self._played, self._resume = True, None
+        if mp.mediaStatus() not in LOADED:
+            self._pending = u
+            return
+        mp.setPosition(int(u * self._f() * 1000))
+        mp.audioOutput().setVolume(VolumeControl.level); mp.audioOutput().setMuted(False)
+        mp.play()
+        self.tick.start()
+        self._icon(True)
+
+    def _pause(self) -> None:
+        u = self._cur_u()
+        self._halt()
+        self._resume = u
+        self._show(u)
+        self._sync_video(u)
+
+    def _halt(self) -> None:
+        for mp in self.players.values():
+            mp.pause()
+        self.tick.stop()
+        self._want = self._pending = None
+        self._icon(False)
+
+    def _sync_video(self, u: float) -> None:
+        p = self._p
+        if not p or p["clip"] not in self.s.edit.clips:
+            return
+        t = output_to_source(u, p["ranges"])
+        self._last = t
+        self.page._goto(self.s.clip_offset(p["clip"]) + t, play=False)
+
+    def _switch(self, kind) -> None:
+        if kind == self._kind:
+            self.which.set_value(kind)
+            return
+        p = self._p
+        if kind == "proc" and (not p or p["drop"]):
+            self.which.set_value(self._kind)
+            return
+        playing = self._playing()
+        u = self._cur_u() if self._ready else None
+        self._kind = kind
+        self.which.set_value(kind)
+        for k, mp in self.players.items():
+            if k != kind:
+                mp.pause()
+        if self._ready and u is not None:
+            if playing:
+                self._play_at(u)
+            else:
+                self._resume = u
+                self._show(u)
+
+    def _nudge(self, d: float) -> None:
+        if not self.isVisible() or not self._ready or not self._p:
+            return
+        u = max(0.0, min(self._cur_u() + d / self._f(), self._total(self._p)))
+        if self._playing():
+            self._play_at(u)
+        else:
+            self._resume = u
+            self._show(u)
+            self._sync_video(u)
+
+    def _status(self, k, st) -> None:
+        if k != self._kind:
+            return
+        if st in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia) and self._pending is not None:
+            u, self._pending = self._pending, None
+            self._play_at(u)
+        elif st == QMediaPlayer.EndOfMedia and self._played and self._p:
+            if self.b_loop.isChecked():
+                self._play_at(0.0)
+            else:
+                self.tick.stop(); self._icon(False)
+                self._resume = None
+                end = max(0.0, self._total(self._p) - 0.01)
+                self._show(end)
+                self._sync_video(end)
+
+    def _clock(self, u: float, t: float) -> None:
+        p = self._p
+        if not p:
+            self.clock.setText("0:00.0")
+            return
+        f = self._f()
+        self.clock.setText(f"{_ts(u * f)} / {_ts(self._total(p) * f)} · source {_ts(t)}")
+
+    def _show(self, u: float) -> None:
+        p = self._p
+        if not p:
+            return
+        t = output_to_source(u, p["ranges"])
+        for r in self.rows:
+            r.wave.set_pos(t if r.clip == p["clip"] else None)
+        self._clock(u, t)
+
+    def _tick(self) -> None:
+        if not self._p:
+            return
+        u = self._cur_u()
+        self._last = output_to_source(u, self._p["ranges"])
+        self._show(u)
+
+    # ---------- render the sound to listen to ----------
+    def _render(self, p, key) -> None:
+        page = self.page
+        ff = page.qm.tc.ffmpeg
+        if not ff:
+            notify(page, "FFmpeg is missing: get it from Downloads.", "warn")
+            return
+        for mp in self.players.values():
+            mp.stop(); mp.setSource(QUrl())
+        self._gen += 1
+        gen = self._gen
+        self._ready, self._p = None, p
+        d = Path(page.settings.temp_dir or TEMP_DIR) / "listen"
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True, exist_ok=True)
+        files = {"orig": d / f"orig_{gen}.wav"}
+        cmds = [listen_cmd(ff, p["clip"], p["n"], p["ranges"], None, files["orig"])]
+        if not p["drop"]:
+            files["proc"] = d / f"proc_{gen}.wav"
+            cmds.append(listen_cmd(ff, p["clip"], p["n"], p["ranges"], p["flt"], files["proc"]))
+        self.bar.note.setText("Preparing the sound…")
+        self.b_play.setEnabled(False)
+
+        def work():
+            for c in cmds:
+                r = run(c, timeout=900)
+                if r.returncode != 0:
+                    tail = [x for x in (r.stderr or "").strip().splitlines() if x.strip()][-1:] or ["FFmpeg failed"]
+                    raise RuntimeError(tail[0][:200])
+            return True
+
+        def done(_r):
+            if not isValid(self) or gen != self._gen:
+                return
+            self.b_play.setEnabled(True)
+            self.bar.note.setText("")
+            self._ready = key
+            for k, f in files.items():
+                if f.exists():
+                    self.players[k].setSource(QUrl.fromLocalFile(str(f)))
+            if self._want is not None:
+                u, self._want = self._want, None
+                self._play_at(u)
+
+        def fail(msg):
+            if not isValid(self) or gen != self._gen:
+                return
+            self.b_play.setEnabled(True)
+            self._want = None
+            self.bar.note.setText(f"Couldn't prepare the sound: {msg}")
+
+        run_async(work, done, fail)
+
+    # ---------- waves, playhead ----------
     def _pick(self, clip, n: int, t: float) -> None:
+        self.setFocus()
+        same = self.sel == (clip, n)
         self.sel = (clip, n)
         for r in self.rows:
             _polish(r, "sel", (r.clip, r.n) == self.sel)
-        if self._playing:
-            self.stop()
+        if not same:
+            self._halt(); self._ready = None; self._resume = None
+            self._p = self._plan()
+        p = self._p
+        if same and p and self._ready == self._key(p):
+            u = source_to_output(t, p["ranges"])
+            if self._playing():
+                self._play_at(u)
+            else:
+                self._resume = u
+                self._show(u)
         self.page._goto(self.s.clip_offset(clip) + t, play=False)
 
     def _pos(self, ms) -> None:
-        if not self.isVisible():
+        if not self.isVisible() or self.tick.isActive():
             return
         t = ms / 1000
         for r in self.rows:
@@ -337,74 +631,14 @@ class AudioView(QWidget):
 
     def stop(self, keep_note: bool = False) -> None:
         self._gen += 1
-        self._playing = None
-        self.mp.stop()
-        for b in (self.l_orig, self.l_proc):
-            b.setChecked(False)
+        was = self._played
+        self._halt()
+        self.b_play.setEnabled(True)
         if not keep_note:
             self.bar.note.setText("")
-
-    def _status(self, st) -> None:
-        if st == QMediaPlayer.EndOfMedia:
-            self.stop()
-
-    def _listen(self, kind: str) -> None:
-        if self._playing == kind:
-            return self.stop()
-        self.stop()
-        btn = self.l_orig if kind == "orig" else self.l_proc
-        s, page = self.s, self.page
-        ff = page.qm.tc.ffmpeg
-        if not self.sel or not s.edit.clips or not ff:
-            return
-        btn.setChecked(True)
-        clip, n = self.sel
-        t = page.player.source_position() if clip == page.cur_clip else 0.0
-        hit = page.previews._range_at(clip, t)
-        if hit is None:
-            notify(page, "This clip is removed in Trim: there's nothing to listen to.", "info")
-            return self.stop()
-        (ra, rb), t0 = hit
-        if rb - t0 < 1.0:
-            t0 = max(ra, rb - 6.0)
-        length = min(6.0, rb - t0)
-        an = analyse(s)
-        plan = an["aplan"] if an else {"mode": "drop"}
-        flt = None
-        if kind == "proc":
-            if plan["mode"] == "drop":
-                notify(page, "The sound is removed in the output.", "info")
-                return self.stop()
-            flt = plan.get("filter")
-        self.mp.setSource(QUrl())
-        d = Path(page.settings.temp_dir or TEMP_DIR) / "listen"
-        shutil.rmtree(d, ignore_errors=True)
-        d.mkdir(parents=True, exist_ok=True)
-        self._gen += 1
-        gen = self._gen
-        out = d / f"{kind}_{gen}.wav"
-        cmd = [ff, "-hide_banner", "-nostdin", "-y", "-v", "error", "-ss", f"{t0:.3f}", "-t", f"{length:.3f}",
-               "-i", clip, "-map", f"0:a:{n}", "-vn", "-sn", "-dn"]
-        if flt:
-            cmd += ["-af", flt]
-        cmd += ["-c:a", "pcm_s16le", str(out)]
-        self._playing = kind
-        self.bar.note.setText("Preparing…")
-        start_at = s.clip_offset(clip) + t0
-
-        def done(_r):
-            if not isValid(self) or gen != self._gen or self._playing != kind:
-                return
-            if not out.exists():
-                self.bar.note.setText("Couldn't prepare the sound")
-                return self.stop(keep_note=True)
-            self.out.setVolume(VolumeControl.level); self.out.setMuted(False)
-            self.mp.setSource(QUrl.fromLocalFile(str(out)))
-            self.mp.play()
-            what = "original" if kind == "orig" else "processed"
-            self.bar.note.setText(f"Playing the {what} sound from {fmt_ts(start_at, False)}")
-
-        run_async(lambda: run(cmd, timeout=120), done, lambda _m: done(None))
+        if was and self._last is not None and self._p and self._p["clip"] in self.s.edit.clips:
+            self.page._goto(self.s.clip_offset(self._p["clip"]) + self._last, play=False)
+        self._played, self._resume, self._ready = False, None, None
 
 
 # ============================== Encode ==============================

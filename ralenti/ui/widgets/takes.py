@@ -13,10 +13,12 @@ from .empty import EmptyState
 from .fields import Field, button
 from .panel import options_scroll
 from .segmented import Segmented
+from .stepper import Stepper
 
 LENGTHS = [("2 s", 2.0, "2 seconds of source"), ("3 s", 3.0, "3 seconds of source"),
            ("5 s", 5.0, "5 seconds of source"), ("10 s", 10.0, "10 seconds of source"),
-           ("Whole", 0.0, "The whole clip, or the trimmed range if you set one")]
+           ("Whole", 0.0, "The whole kept part under the playhead"),
+           ("Custom", "custom", "Any length from 0.5 to 60 s")]
 TW, TH = 112, 63
 
 
@@ -109,10 +111,16 @@ class TakePanel(QWidget):
         self._has_file = False
         v = QVBoxLayout(self); v.setContentsMargins(18, 14, 18, 16); v.setSpacing(12)
         self.len = Segmented(LENGTHS)
+        self.custom = Stepper(0.5, 60.0, 4.0, step=0.5, decimals=1, suffix=" s")
+        lw = QWidget(); lv = QVBoxLayout(lw); lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(8)
+        lv.addWidget(self.len); lv.addWidget(self.custom)
         if not self.len.set_value(float(length)):
-            self.len.set_value(3.0)
+            self.len.set_value("custom")
+            self.custom.setValue(float(length) if float(length) > 0 else 4.0)
+        self.custom.setVisible(self.len.value() == "custom")
         self.len.changed.connect(self._len_changed)
-        self.len_field = Field("Length", self.len)
+        self.custom.valueChanged.connect(lambda _v: self._len_changed(self.len.value()))
+        self.len_field = Field("Length", lw)
         v.addWidget(self.len_field)
         self.render_btn = button("Render at playhead", lambda: self.render_requested.emit(self.length()),
                                  "accent", icon="play-circle")
@@ -129,19 +137,23 @@ class TakePanel(QWidget):
         self.list.addStretch(1)
         self.scroll = options_scroll(body); self.scroll.hide()
         v.addWidget(self.scroll, 1)
-        self._len_changed(self.length())
+        self._len_changed(self.len.value())
         self.set_has_file(False)
 
     def length(self) -> float:
         v = self.len.value()
+        if v == "custom":
+            return float(self.custom.value())
         return 3.0 if v is None else float(v)
 
     def _len_changed(self, v) -> None:
-        whole = float(v) <= 0
+        self.custom.setVisible(v == "custom")
+        n = self.length()
+        whole = n <= 0
         self.render_btn.setText("Render the whole clip" if whole else "Render at playhead")
         self.len_field.set_hint("Renders the whole clip, or your trimmed range. Long clips take a while."
                                 if whole else "Seconds of source to render. Slow motion makes the take longer.")
-        self.length_changed.emit(float(v))
+        self.length_changed.emit(n)
 
     def set_has_file(self, on: bool) -> None:
         self._has_file = on

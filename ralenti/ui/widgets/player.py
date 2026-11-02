@@ -57,33 +57,56 @@ class IconSeg(QFrame):
             self.group.button(self._values.index(v)).setChecked(True)
 
 
+from PySide6.QtCore import QPointF, QTimer  # noqa: E402
+from PySide6.QtGui import QPainterPath  # noqa: E402
+from PySide6.QtWidgets import QApplication, QGraphicsPathItem  # noqa: E402
+
+from .. import theme as _theme  # noqa: E402
+
+
 class VideoView(QGraphicsView):
+    """The picture. Scroll to zoom around the cursor, drag to move when zoomed (middle button while drawing a crop),
+    double-click to fit. The area around the picture is patterned and the picture framed, so black bars in the video
+    stay visible. A red tint can mark the parts auto crop removes."""
     clicked = Signal()
+    zoom_changed = Signal(float)
 
     def __init__(self):
         super().__init__()
         self.setScene(QGraphicsScene(self))
         self._fw, self._fh, self._tf = 1920, 1080, (0, False, False, None)
+        self._zoom, self._center, self._press, self._panned = 1.0, None, None, False
         self.holder = QGraphicsRectItem()          # clips the picture to the crop; carries rotate/flip
         self.holder.setPen(QPen(Qt.NoPen))
         self.holder.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
         self.scene().addItem(self.holder)
         self.video = QGraphicsVideoItem(self.holder)
         self.video.setAspectRatioMode(Qt.IgnoreAspectRatio)
+        self.tint = QGraphicsPathItem(self.holder)
+        self.tint.setPen(QPen(Qt.NoPen)); self.tint.setBrush(QColor(248, 113, 113, 85))
+        self.tint.setZValue(2); self.tint.hide()
         self.crop = CropOverlay()
         self.scene().addItem(self.crop)
-        self.setBackgroundBrush(QColor("#000000"))
+        self.setBackgroundBrush(_theme.backdrop())
         self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.NoAnchor)
         self.setRenderHint(QPainter.SmoothPixmapTransform)
         self.setAcceptDrops(False)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(320, 180)
+        self.badge = QLabel(self.viewport()); self.badge.setObjectName("ZoomBadge"); self.badge.hide()
+        self.badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._click = QTimer(self); self._click.setSingleShot(True)
+        self._click.setInterval(QApplication.doubleClickInterval())
+        self._click.timeout.connect(self.clicked.emit)
         self.set_frame(1920, 1080)
 
     def set_frame(self, w: int, h: int) -> None:
         self._fw, self._fh = w, h
+        self._zoom, self._center = 1.0, None
         self.video.setSize(QSizeF(w, h))
         self.crop.set_frame(w, h)
         self._apply()
@@ -94,7 +117,19 @@ class VideoView(QGraphicsView):
         tf = (int(rotate or 0) % 360, bool(hflip), bool(vflip), tuple(rect) if rect else None)
         if tf != self._tf:
             self._tf = tf
+            self._center = None
             self._apply()
+
+    def set_tint(self, rect) -> None:
+        """Tints everything outside rect (w, h, x, y in source pixels), or nothing."""
+        if not rect:
+            self.tint.hide()
+            return
+        w, h, x, y = rect
+        outer = QPainterPath(); outer.addRect(QRectF(0, 0, self._fw, self._fh))
+        inner = QPainterPath(); inner.addRect(QRectF(x, y, w, h))
+        self.tint.setPath(outer.subtracted(inner))
+        self.tint.show()
 
     def _apply(self) -> None:
         rot, hf, vf, rect = self._tf
@@ -109,10 +144,68 @@ class VideoView(QGraphicsView):
         self.scene().setSceneRect(t.mapRect(r))
         self._fit()
 
+    # ---------- zoom ----------
+    def _base(self) -> float:
+        r, vp = self.scene().sceneRect(), self.viewport()
+        return min((vp.width() - 2) / r.width(), (vp.height() - 2) / r.height())
+
+    def _clamp(self, c) -> QPointF:
+        r = self.scene().sceneRect()
+        return QPointF(min(max(c.x(), r.left()), r.right()), min(max(c.y(), r.top()), r.bottom()))
+
     def _fit(self):
         r = self.scene().sceneRect()
-        if not r.isEmpty():
-            self.fitInView(r, Qt.KeepAspectRatio)
+        if r.isEmpty() or self.viewport().width() < 4 or self.viewport().height() < 4:
+            return
+        s = self._base() * self._zoom
+        self.resetTransform()
+        self.scale(s, s)
+        zoomed = self._zoom > 1.0001
+        self.centerOn(self._clamp(self._center) if zoomed and self._center is not None else r.center())
+        self._badge()
+
+    def _badge(self) -> None:
+        z = self._zoom > 1.0001
+        self.badge.setVisible(z)
+        if z:
+            self.badge.setText(f"{self.transform().m11() * 100:.0f}%")
+            self.badge.adjustSize()
+            vp = self.viewport()
+            self.badge.move(vp.width() - self.badge.width() - 10, vp.height() - self.badge.height() - 10)
+
+    def reset_zoom(self) -> None:
+        if self._zoom != 1.0:
+            self._zoom, self._center = 1.0, None
+            self._fit()
+            self.zoom_changed.emit(1.0)
+
+    def wheelEvent(self, e):
+        r = self.scene().sceneRect()
+        if r.isEmpty():
+            return
+        pos = e.position()
+        pt = self.mapToScene(pos.toPoint())
+        self._zoom = max(1.0, min(32.0, self._zoom * 1.25 ** (e.angleDelta().y() / 120)))
+        if self._zoom <= 1.0001:
+            self._zoom, self._center = 1.0, None
+        else:
+            s = self._base() * self._zoom
+            vp = self.viewport()
+            self._center = QPointF(pt.x() - (pos.x() - vp.width() / 2) / s, pt.y() - (pos.y() - vp.height() / 2) / s)
+        self._fit()
+        self.zoom_changed.emit(self._zoom)
+        e.accept()
+
+    # ---------- frame around the picture ----------
+    def drawForeground(self, painter, rect):
+        r = self.scene().sceneRect()
+        if r.isEmpty():
+            return
+        painter.save()
+        pen = QPen(QColor(255, 255, 255, 50), 1); pen.setCosmetic(True)
+        painter.setPen(pen); painter.setBrush(Qt.NoBrush)
+        painter.drawRect(r)
+        painter.restore()
 
     def resizeEvent(self, e):
         super().resizeEvent(e); self._fit()
@@ -120,12 +213,48 @@ class VideoView(QGraphicsView):
     def showEvent(self, e):
         super().showEvent(e); self._fit()
 
+    # ---------- mouse: click plays, drag pans when zoomed, double-click fits ----------
     def mousePressEvent(self, e):
         self.setFocus()
-        if self.crop.isVisible():
-            super().mousePressEvent(e)
-        elif e.button() == Qt.LeftButton:
-            self.clicked.emit()
+        b = e.button()
+        if b == Qt.MiddleButton or (b == Qt.LeftButton and not self.crop.isVisible()):
+            self._press = (e.position(), self.mapToScene(self.viewport().rect().center()), b)
+            self._panned = False
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._press is not None:
+            p0, c0, _b = self._press
+            d = e.position() - p0
+            if self._zoom > 1.0001 and (self._panned or abs(d.x()) + abs(d.y()) > 4):
+                self._panned = True
+                s = self.transform().m11()
+                self._center = QPointF(c0.x() - d.x() / s, c0.y() - d.y() / s)
+                self._fit()
+                self.viewport().setCursor(Qt.ClosedHandCursor)
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._press is not None:
+            b, panned = self._press[2], self._panned
+            self._press, self._panned = None, False
+            self.viewport().setCursor(Qt.OpenHandCursor if self._zoom > 1.0001 else Qt.ArrowCursor)
+            if b == Qt.LeftButton and not panned:
+                if self._zoom > 1.0001:
+                    self._click.start()        # wait: a double-click fits instead of playing
+                else:
+                    self.clicked.emit()
+            return
+        super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        if self.crop.isVisible() and e.button() == Qt.LeftButton:
+            super().mouseDoubleClickEvent(e)
+            return
+        self._click.stop()
+        self.reset_zoom()
 
 
 class CtaOverlay(QFrame):
@@ -248,8 +377,7 @@ class PlayerPanel(QWidget):
                   self.play_btn, tb("caret-right", "Next frame (→)", lambda: self.step(1)), self.key_btns[1]):
             row.addWidget(b)
         from .timeline import zoom_controls
-        row.addSpacing(10); row.addWidget(self.time); row.addSpacing(8)
-        row.addWidget(zoom_controls(self.timeline)); row.addStretch(1)
+        row.addSpacing(10); row.addWidget(self.time); row.addStretch(1)
         self.range_btns = []
         if show_range:
             self.range_btns = [tb("mark-in", "Set in point (I)", self.set_in),

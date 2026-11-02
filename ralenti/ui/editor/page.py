@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, 
 from shiboken6 import isValid
 
 from ...core import edit_presets
+from ...core.cropdetect import detect_crop
 from ...core.edit import compile_job
 from ...core.scenes import detect_times
 from ...core.segments import add_cut, kept_ranges, remove_cut, segments, to_cuts, toggle
@@ -49,6 +50,8 @@ TOGGLES = ("trim", "crop", "motion")
 TOOL_STEPS = ("trim", "crop", "motion")
 PLAYING = QMediaPlayer.PlayingState
 SCENE_TOL, PICK_TOL = 0.12, 0.25
+SNAP = [("keys", "Keyframes", "Snap: keys"), ("scenes", "Scene cuts", "Snap: scenes"),
+        ("both", "Keyframes and scene cuts", "Snap: both"), ("off", "Off", "No snap")]
 
 
 def _detach(layout, w) -> None:
@@ -71,6 +74,7 @@ class EditorPage(QWidget):
         self.step, self.cur_clip, self._what, self._pending = "motion", None, set(), False
         self._before, self._scenes, self._scene_busy, self._chip_items = False, {}, None, []
         self._issues = []
+        self._autocrop, self._split_after = {}, False
         self.session = s = EditSession(qm)
         root = QVBoxLayout(self); root.setContentsMargins(28, 22, 28, 14); root.setSpacing(10)
 
@@ -231,13 +235,23 @@ class EditorPage(QWidget):
         self.t_keep = tool("Remove", "x", "Keep or remove the segment under the playhead (X)", self._toggle_here)
         self.t_kept = tool("Kept only", "play-circle", "Play only the kept parts here. The other steps always "
                                                        "skip removed parts.", checkable=True)
-        self.t_snap = tool("Snap", "crosshair-simple", "Snap cuts to keyframes: needed for exact lossless cuts "
-                                                       "with Encode › Copy", checkable=True)
-        self.t_snap.setChecked(True)
+        self._snap_mode = getattr(self.settings, "trim_snap", "keys") or "keys"
+        self.t_snap = tool("Snap", "crosshair-simple", "Where new and moved cuts snap to. Keyframes are needed for "
+                                                       "exact lossless cuts with Encode › Copy.")
+        snap_menu = QMenu(self.t_snap)
+        self._snap_acts = {}
+        for key, label, _short in SNAP:
+            a = snap_menu.addAction(label); a.setCheckable(True)
+            a.triggered.connect(lambda _=False, k=key: self._set_snap(k))
+            self._snap_acts[key] = a
+        self.t_snap.setMenu(snap_menu); self.t_snap.setPopupMode(QToolButton.InstantPopup)
+        self._set_snap(self._snap_mode if self._snap_mode in self._snap_acts else "keys", save=False)
+        self.t_split = tool("Split at scenes", "split-h", "Cut the video at every scene cut, so you can keep or remove "
+                                                          "whole shots", lambda: self._split_scenes())
         self.t_before = tool("Before", "eye", "Show the untouched source (B)", lambda on: self._set_before(on),
                              checkable=True)
         r.add(self.t_cut); r.sep(); r.add(self.t_prev, self.t_next); r.sep(); r.add(self.t_keep); r.sep()
-        r.add(self.t_kept, self.t_snap); r.sep(); r.add(self.t_before); r.finish()
+        r.add(self.t_split); r.sep(); r.add(self.t_kept, self.t_snap); r.sep(); r.add(self.t_before); r.finish()
 
         r = self.rows["crop"]
         self.c_rl = tool("", "arrow-counter-clockwise", "Rotate left (Shift+R)", lambda: self._rotate(-90))
@@ -303,6 +317,7 @@ class EditorPage(QWidget):
         for b in (self.t_cut, self.t_kept, self.t_snap, self.c_rl, self.c_rr, self.c_hf, self.c_vf, self.c_draw,
                   self.c_shape, self.c_reset, self.c_before, self.t_before):
             b.setEnabled(has)
+        self.t_split.setEnabled(has and bool(self.qm.tc.ffmpeg))
         mon = has and bool(e.motion.get("on"))
         self.m_preview.setEnabled(mon)
         self.m_preview.setToolTip("Render a few seconds at the playhead with the current settings (P). Follows your "
@@ -337,7 +352,7 @@ class EditorPage(QWidget):
         self._sync_view()
         self._sync_chips(analyse(self.session))
         self._sync_summary()
-        if step == "motion":
+        if step in ("motion", "trim"):
             self._find_scenes()
         self._sync_marks()
 
@@ -470,7 +485,7 @@ class EditorPage(QWidget):
             panel.issues.set_issues([i for i in self._issues if i["step"] == key])
         self._sync_tab_dots()
         self._sync_summary(an)
-        if self.step == "motion" and what & {"clips", "all", "motion"}:
+        if self.step in ("motion", "trim") and what & {"clips", "all", "motion"}:
             self._find_scenes()
         self._sync_marks()
         self.previews.refresh()
@@ -571,7 +586,8 @@ class EditorPage(QWidget):
             self.player.view.crop.set_crop(crop)
 
     def _sync_view(self) -> None:
-        """Rotation, flip and crop applied to the picture: on Transform and every step after it."""
+        """Rotation, flip and crop applied to the picture on every step. Auto crop: the detected bars are tinted on
+        Transform and removed everywhere else."""
         s, e = self.session, self.session.edit
         if not self.cur_clip or not e.clips:
             return
@@ -580,21 +596,48 @@ class EditorPage(QWidget):
         on = bool(c.get("on")) and not self._before
         drawing = self.c_draw.isChecked() and self.step == "crop"
         crop = c.get("crop") if on else None
-        same = info and first and (info.width, info.height) == (first.width, first.height)
+        tint, note = None, ""
+        if crop == "auto":
+            det = self._autocrop.get(self.cur_clip)
+            if det is None:
+                self._detect_auto(self.cur_clip)
+                det = self._autocrop.get(self.cur_clip)
+            note = {"busy": "Finding black bars…", "none": "No black bars found",
+                    "nodetect": "Black-bar detection needs the full FFmpeg build"}.get(det, "")
+            crop = None
+            if isinstance(det, list):
+                if self.step == "crop":
+                    tint = None if drawing else det
+                    note = f"Red: the black bars auto crop removes · {det[0]}×{det[1]} kept"
+                else:
+                    crop = det
+            same = True
+        else:
+            same = bool(info and first and (info.width, info.height) == (first.width, first.height))
         rect = crop if isinstance(crop, list) and same and not drawing else None
-        self.player.view.set_transform(int(c.get("rotate") or 0) % 360 if on else 0,
-                                       bool(c.get("hflip")) and on, bool(c.get("vflip")) and on, rect)
+        v = self.player.view
+        v.set_transform(int(c.get("rotate") or 0) % 360 if on else 0, bool(c.get("hflip")) and on,
+                        bool(c.get("vflip")) and on, rect)
+        v.set_tint(tint)
+        if "crop" in getattr(self, "rows", {}):
+            self.rows["crop"].note.setText(note if self.step == "crop" else "")
 
     # ---------- trim ----------
     def _snap(self, t: float) -> float:
-        if not self.t_snap.isChecked() or not self.cur_clip or not self.player.keys:
+        """Snaps a cut to the nearest keyframe and/or scene cut (within 1.5 s), as chosen in Snap."""
+        mode = getattr(self, "_snap_mode", "keys")
+        if mode == "off" or not self.cur_clip:
             return t
-        off = self.session.clip_offset(self.cur_clip)
-        local = t - off
-        if not 0 <= local <= self.session.info(self.cur_clip).duration:
+        cands = []
+        if mode in ("keys", "both") and self.player.keys:
+            off = self.session.clip_offset(self.cur_clip)
+            cands += [off + k for k in self.player.keys]
+        if mode in ("scenes", "both"):
+            cands += [x for x, k in self._scene_marks() if k != "removed"]
+        if not cands:
             return t
-        k = min(self.player.keys, key=lambda x: abs(x - local))
-        return off + k if abs(k - local) <= 1.5 else t
+        c = min(cands, key=lambda x: abs(x - t))
+        return c if abs(c - t) <= 1.5 else t
 
     def _set_trim(self, tr: dict) -> None:
         self.panels["trim"]._trim(tr)
@@ -654,6 +697,68 @@ class EditorPage(QWidget):
         cuts[k] = round(min(max(self._snap(t), lo), hi), 3)
         tr.update(cuts=cuts, on=True)
         self._set_trim(tr)
+
+    # ---------- snap, split at scenes, auto crop ----------
+    def _set_snap(self, k: str, save: bool = True) -> None:
+        self._snap_mode = k
+        for key, a in self._snap_acts.items():
+            a.setChecked(key == k)
+        self.t_snap.setText(next(short for key, _l, short in SNAP if key == k))
+        if save:
+            self.settings.trim_snap = k
+            self.settings.save()
+            if k in ("scenes", "both"):
+                self._find_scenes()
+
+    def _split_scenes(self) -> None:
+        m = self.session.media()
+        if not m:
+            return
+        if self._scene_key() not in self._scenes:
+            self._split_after = True
+            notify(self, "Finding the scene cuts first…", "info")
+            self._find_scenes()
+            return
+        times = [t for t, k in self._scene_marks() if k != "removed"]
+        if not times:
+            notify(self, "No scene cuts found in this video", "info")
+            return
+        tr = self.session.edit.trim
+        n0 = len(to_cuts(tr, m.duration).get("cuts") or [])
+        for t in times:
+            tr = add_cut(tr, t, m.duration)
+        added = len(tr.get("cuts") or []) - n0
+        if added <= 0:
+            notify(self, "The video is already cut at every scene cut", "info")
+            return
+        self._set_trim(tr)
+        notify(self, f"Cut at {added} scene cut{'s' if added != 1 else ''} · click a shot to remove it · "
+                     "Ctrl+Z to undo", "ok")
+
+    def _detect_auto(self, path) -> None:
+        tc = self.qm.tc
+        if path in self._autocrop:
+            return
+        if not tc.ffmpeg or not tc.has_cropdetect:
+            self._autocrop[path] = "nodetect"
+            return
+        self._autocrop[path] = "busy"
+        info, ff = self.session.info(path), tc.ffmpeg
+
+        def done(c):
+            if not isValid(self):
+                return
+            self._autocrop[path] = [c.w, c.h, c.x, c.y] if c else "none"
+            if isValid(self.session):
+                self._sync_view()
+
+        def fail(_m):
+            if isValid(self):
+                self._autocrop[path] = "none"
+                if isValid(self.session):
+                    self._sync_view()
+
+        run_async(lambda: detect_crop(ff, info), done, fail)
 
     # ---------- transform ----------
     def _rotate(self, d: int) -> None:
@@ -715,7 +820,8 @@ class EditorPage(QWidget):
     # ---------- scene cuts ----------
     def _scene_key(self):
         e = self.session.edit
-        return tuple(e.clips), e.motion.get("scene") or "normal"
+        level = e.motion.get("scene") or "normal"
+        return tuple(e.clips), (level if level != "off" else "normal")
 
     def _scene_marks(self) -> list:
         m = self.session.edit.motion
@@ -727,16 +833,18 @@ class EditorPage(QWidget):
 
     def _find_scenes(self, force: bool = False) -> None:
         s, e = self.session, self.session.edit
-        level = e.motion.get("scene") or "normal"
         key = self._scene_key()
-        if not e.clips or level == "off" or not self.qm.tc.ffmpeg or self._scene_busy:
+        if not e.clips or not self.qm.tc.ffmpeg or self._scene_busy:
+            return
+        if (e.motion.get("scene") or "normal") == "off" and self.step != "trim" and not force:
             return
         if key in self._scenes and not force:
             return
-        ffmpeg = self.qm.tc.ffmpeg
+        ffmpeg, level = self.qm.tc.ffmpeg, key[1]
         clips = [(s.clip_offset(c), s.info(c)) for c in e.clips]
         self._scene_busy = key
         self._update_scene_ui()
+        self._sync_marks()
 
         def work():
             out = []
@@ -751,14 +859,18 @@ class EditorPage(QWidget):
             self._scenes[key] = times
             if isValid(self.session):
                 self._update_scene_ui(); self._sync_marks()
+                if self._split_after:
+                    self._split_after = False
+                    self._split_scenes()
 
         def fail(msg):
             if not isValid(self):
                 return
             self._scene_busy = None
+            self._split_after = False
             notify(self, f"Scene detection failed: {msg}", "error")
             if isValid(self.session):
-                self._update_scene_ui()
+                self._update_scene_ui(); self._sync_marks()
 
         run_async(work, done, fail)
 
@@ -789,12 +901,27 @@ class EditorPage(QWidget):
                          if found or add else "Not scanned yet")
 
     def _sync_marks(self) -> None:
-        tl = self.player.timeline
-        if self.step != "motion" or not self.cur_clip:
-            tl.set_marks([])
+        tl, e = self.player.timeline, self.session.edit
+        if self.step not in ("motion", "trim") or not self.cur_clip or not e.clips:
+            tl.set_marks([]); self.segbar.set_scenes([])
             return
+        marks = self._scene_marks()
+        if self.step == "trim":
+            marks = [(t, k) for t, k in marks if k != "removed"]
+            self.segbar.set_scenes([t for t, _k in marks])
+            n, note = len(marks), self.rows["trim"].note
+            if self._scene_busy:
+                note.setText("Finding scene cuts…")
+            elif self._scene_key() in self._scenes or n:
+                note.setText(f"{n} scene cut{'s' if n != 1 else ''} · amber marks")
+            else:
+                note.setText("")
+        else:
+            self.segbar.set_scenes([])
+            if (e.motion.get("scene") or "normal") == "off":
+                marks = []
         off, d = self.session.clip_offset(self.cur_clip), self.session.info(self.cur_clip).duration
-        tl.set_marks([(t - off, k) for t, k in self._scene_marks() if off - 1e-3 <= t <= off + d + 1e-3])
+        tl.set_marks([(t - off, k) for t, k in marks if off - 1e-3 <= t <= off + d + 1e-3])
 
     def _jump_scene(self, d: int) -> None:
         self._jump([t for t, k in self._scene_marks() if k != "removed"], d)

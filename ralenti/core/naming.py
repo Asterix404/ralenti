@@ -12,12 +12,38 @@ PLACEHOLDERS = {
 _BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+PLACEHOLDERS.update({
+    "ai": "AI model, only when Interpolation is on",
+    "frames": "Frame-rate change (2x, 60fps), only when there is one",
+    "slow": "slow2x, only with slow motion",
+    "target": "vmaf95, only with a VMAF target",
+})
+LABELLED = frozenset({"ai", "frames", "slow", "target"})
+AUTO = "{name}_ralenti_{ai}_{frames}_{slow}_{target}"     # the automatic name, as a template
+
+
+def frames_tag(m) -> str:
+    m = m or {}
+    fv = float(m.get("fps_value") or 0)
+    return {"multiply": f"{fv:g}x", "fixed": f"{fv:g}fps"}.get(m.get("fps_mode") or "keep", "")
+
+
 def render(template: str, ctx: dict) -> str:
+    """Fills the placeholders. A labelled placeholder that doesn't apply disappears with the separator before it."""
     def sub(m):
         k = m.group(1)
-        return str(ctx[k]) if k in ctx and k != "n" else m.group(0)
+        if k == "n" or k not in ctx:
+            return m.group(0)
+        v = str(ctx[k])
+        return "\x00" if k in LABELLED and not v else v
 
-    return _BAD.sub("_", re.sub(r"\{(\w+)\}", sub, template or "")).strip().rstrip(". ")
+    s = re.sub(r"\{(\w+)\}", sub, template or "")
+    had = "\x00" in s
+    s = re.sub(r"[_\- ]?\x00", "", s)
+    s = _BAD.sub("_", s).strip()
+    if had:
+        s = s.strip("_- ")
+    return s.rstrip(". ")
 
 
 def resolve(folder, base: str, ext: str, overwrite: bool = False) -> Path:

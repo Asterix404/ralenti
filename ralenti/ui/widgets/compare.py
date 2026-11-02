@@ -95,7 +95,7 @@ class CompareCanvas(QWidget):
     def paintEvent(self, _):
         self._hits = []
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#000000"))
+        p.fillRect(self.rect(), theme.backdrop())
         if self.a is None:
             p.setPen(QColor(theme.MUTED)); p.drawText(self.rect(), Qt.AlignCenter, "Loading…")
             return

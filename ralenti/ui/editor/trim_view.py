@@ -17,6 +17,7 @@ class SegmentBar(QWidget):
         super().__init__()
         self.duration, self.segs, self.pos, self.view_fn = 0.0, [], 0.0, None
         self._drag, self._press, self._hover = None, None, -1
+        self.scenes: list[float] = []
         self.setMinimumHeight(46)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
@@ -28,6 +29,12 @@ class SegmentBar(QWidget):
     def set_position(self, t: float) -> None:
         self.pos = t
         self.update()
+
+    def set_scenes(self, times) -> None:
+        times = sorted(times or [])
+        if times != self.scenes:
+            self.scenes = times
+            self.update()
 
     def cuts(self) -> list[float]:
         return [b for _a, b, _k in self.segs[:-1]]
@@ -83,6 +90,11 @@ class SegmentBar(QWidget):
             if sr.width() > 80:
                 p.setPen(QColor(theme.TEXT if keep else theme.MUTED))
                 p.drawText(sr, Qt.AlignCenter, f"{'Kept' if keep else 'Removed'} · {dur(edges[i + 1] - edges[i])}")
+        p.setPen(QPen(QColor(theme.WARN), 1.5))
+        for sc in self.scenes:
+            xs = self._x(sc)
+            p.drawLine(QPointF(xs, r.top()), QPointF(xs, r.top() + 7))
+            p.drawLine(QPointF(xs, r.bottom() - 7), QPointF(xs, r.bottom()))
         for c in cuts:
             x = self._x(c)
             p.setPen(QPen(QColor(theme.TEXT), 2)); p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))

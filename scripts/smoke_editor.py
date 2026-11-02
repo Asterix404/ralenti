@@ -298,6 +298,49 @@ def run(app, video):
     check("Picture chip on Trim", lambda: expect(any(x[0] == "crop" for x in ed._chip_items),
                                                  [x[2] for x in ed._chip_items], "missing"))
 
+    # ---- 0.14 batch 5b: picture zoom, scene cuts on Trim, names, custom preview, audio transport ----
+    win.go("trim"); pump(app)
+    vv = ed.player.view
+    check("picture zoom", lambda: (setattr(vv, "_zoom", 3.0), vv._fit(), pump(app),
+                                   expect(not vv.badge.isHidden(), vv.badge.text(), "no zoom badge"),
+                                   vv.reset_zoom())[3])
+    check("split at scene cuts", lambda: (ed._scenes.__setitem__(ed._scene_key(), [round(d / 2, 3)]),
+                                          ed._set_trim({"on": False, "cuts": [], "drop": []}), pump(app),
+                                          ed._split_scenes(), pump(app),
+                                          expect(len(ses.edit.trim.get("cuts") or []) >= 1,
+                                                 ses.edit.trim.get("cuts"), "no cut"))[5])
+    from ralenti.core.naming import AUTO as _AUTO
+    win.go("output"); pump(app)
+    check("automatic name pattern", lambda: expect(ed.panels["output"].name.placeholderText().endswith(_AUTO),
+                                                   ed.panels["output"].name.placeholderText(), "old pattern"))
+
+    def _custom_len():
+        pv = ed.previews.panel
+        pv.blockSignals(True)
+        try:
+            pv.len.set_value("custom"); pv._len_changed("custom"); pv.custom.setValue(7.0)
+            got = pv.length()
+            pv.len.set_value(3.0); pv._len_changed(3.0)
+        finally:
+            pv.blockSignals(False)
+        return expect(abs(got - 7.0) < 1e-6, f"{got:g} s", f"{got}")
+
+    check("custom preview length", _custom_len)
+    if ses.info(ed.cur_clip).has_audio:
+        def _audio_render():
+            from ralenti.core.tools import run as _run
+            from ralenti.core.waveform import listen_cmd as _lc
+            win.go("audio"); pump(app, 10)
+            p = ed.audio_view._plan()
+            expect(p is not None, "", "no plan")
+            out = Path(s.temp_dir or _TMP) / "smoke_listen.wav"
+            r = _run(_lc(tc.ffmpeg, p["clip"], p["n"], p["ranges"], p["flt"], out), timeout=120)
+            expect(r.returncode == 0 and out.exists(), "", (r.stderr or "")[-200:])
+            out.unlink(missing_ok=True)
+            return f"{len(p['ranges'])} part(s) · processed at {p['slow']:g}×"
+
+        check("audio transport render", _audio_render)
+
     def kinds():
         return [st.kind for st in compile_job(tc, s, ses.edit).steps]
 

@@ -8,7 +8,7 @@ from ...core.encoders import ENCODERS
 from ...core.engines import all_models, resolve_model
 from ...core.estimate import describe, estimate
 from ...core.fps import target_fps
-from ...core.naming import render, resolve
+from ...core.naming import AUTO, frames_tag, render, resolve
 from ...core.segments import kept_ranges
 from ...core.transform import output_size
 from ..util import fmt_ts
@@ -59,7 +59,10 @@ def name_context(session, an) -> dict:
             "fps": f"{f:.3f}".rstrip("0").rstrip("."), "res": f"{w}x{h}",
             "encoder": "copy" if an["copy"] else (enc.key if enc else ""),
             "vmaf": f"{an['vmaf']:g}" if an["vmaf"] else "cq", "date": now.strftime("%Y-%m-%d"),
-            "time": now.strftime("%H-%M")}
+            "time": now.strftime("%H-%M"), "ai": an["model"] or "",
+            "frames": frames_tag(e.motion) if an["motion"] else "",
+            "slow": f"slow{an['slow']:g}x" if an["slow"] != 1 else "",
+            "target": f"vmaf{an['vmaf']:g}" if an["vmaf"] else ""}
 
 
 def preview_output(session, an) -> Path:
@@ -67,10 +70,7 @@ def preview_output(session, an) -> Path:
     src = Path(e.clips[0])
     folder = Path(o.get("out_dir") or src.parent)
     tpl = (o.get("name") or "").strip()
-    base = render(tpl, name_context(session, an)) if tpl else ""
-    if not base:
-        base = (src.stem + "_ralenti" + (f"_{an['model']}" if an["motion"] else "")
-                + (f"_slow{an['slow']:g}x" if an["slow"] != 1 else "") + (f"_vmaf{an['vmaf']:g}" if an["vmaf"] else ""))
+    base = render(tpl or AUTO, name_context(session, an)) or src.stem
     return resolve(folder, base, an["ext"], o.get("exists") == "overwrite")
 
 

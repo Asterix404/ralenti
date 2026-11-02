@@ -17,7 +17,7 @@ from .fps import target_fps
 from .jobs import Job, Step
 from .keyframes import keyframes, prev_key
 from .merge import compat_issues
-from .naming import render, resolve
+from .naming import AUTO, frames_tag, render, resolve
 from .pipeline import BYTES_PER_PIXEL, _prepare, _tmp, info_to_dict, part_path
 from .probe import probe
 from .segments import boundaries, kept_ranges, source_to_output
@@ -184,7 +184,7 @@ def _output(e: Edit, ext: str, tail: str, ctx: dict, overwrite: bool) -> str:
     src = Path(e.clips[0])
     folder = Path(e.output.get("out_dir") or src.parent)
     tpl = (e.output.get("name") or "").strip()
-    base = (render(tpl, ctx) if tpl else "") or f"{src.stem}{tail}"
+    base = render(tpl or AUTO, ctx) or src.stem
     return str(resolve(folder, base, ext, overwrite))
 
 
@@ -253,7 +253,9 @@ def compile_job(tc, settings, edit: Edit) -> Job:
         now, f = datetime.now(), float(fps or info.fps or 0)
         return {"name": Path(e.clips[0]).stem, "model": model or "none", "slowmo": f"{slow:g}",
                 "fps": f"{f:.3f}".rstrip("0").rstrip("."), "res": f"{size[0]}x{size[1]}", "encoder": enc_key,
-                "vmaf": f"{vmaf:g}" if vmaf else "cq", "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H-%M")}
+                "vmaf": f"{vmaf:g}" if vmaf else "cq", "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H-%M"),
+                "ai": model or "", "frames": frames_tag(m) if model else "",
+                "slow": f"slow{slow:g}x" if slow != 1 else "", "target": f"vmaf{vmaf:g}" if vmaf else ""}
 
     def fix_audio(aplan, ext, slow, enc_key):
         if aplan["mode"] == "copy" and tracks_all and any(not passthrough_ok(tracks_all[i]["codec"], ext) for i in sel):

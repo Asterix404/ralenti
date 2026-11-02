@@ -292,6 +292,8 @@ QFrame#OffRow QLabel {{ background: transparent; color: {MUTED}; }}
 QPushButton#SumHead {{ background: transparent; border: none; padding: 0; text-align: left; color: {MUTED};
     font-size: 8pt; font-weight: 700; }}
 QPushButton#SumHead:hover {{ color: {TEXT}; }}
+QLabel#ZoomBadge {{ background: rgba(0, 0, 0, 170); color: {TEXT}; border-radius: 9px; padding: 2px 8px;
+    font-size: 8.5pt; font-weight: 600; }}
 """
 
 
@@ -333,3 +335,23 @@ def _make_style():
     global _style
     _style = _RalentiStyle("Fusion")
     return _style
+
+
+
+# ===================== 0.14: backdrop behind the picture =====================
+_BACKDROP = None
+
+
+def backdrop():
+    """Patterned dark grey for the area around the picture, so black bars in a video stay visible."""
+    global _BACKDROP
+    if _BACKDROP is None:
+        from PySide6.QtGui import QBrush, QPainter, QPen, QPixmap
+        pm = QPixmap(16, 16)
+        pm.fill(QColor("#111318"))
+        p = QPainter(pm)
+        p.setPen(QPen(QColor(255, 255, 255, 13), 1))
+        p.drawLine(0, 15, 15, 0)
+        p.end()
+        _BACKDROP = QBrush(pm)
+    return _BACKDROP

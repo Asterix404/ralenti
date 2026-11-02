@@ -44,6 +44,7 @@ class Settings:
     name_template: str = ""
     edit_preset_noconfirm: bool = False
     summary_collapsed: bool = False
+    trim_snap: str = "keys"
     recent_out_dirs: str = ""
     concurrency: str = "auto"
     last_version: str = ""

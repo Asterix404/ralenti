@@ -40,7 +40,7 @@ class Timeline(QWidget):
         self._pan, self._dragging = None, False
         self.setMinimumHeight(58)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Scroll to zoom · right-drag or Shift+scroll to move")
+        self.setToolTip("Scroll to zoom · right-drag or Shift+scroll to move · double-click to show everything")
 
     # ---------- view ----------
     def view(self) -> tuple[float, float]:
@@ -155,12 +155,18 @@ class Timeline(QWidget):
         acc = QColor(theme.ACCENT)
         a, b = self.view()
         if self.zoomed():
-            ov = QRectF(r.left(), 3, r.width(), 3)
+            ov = QRectF(r.left(), 3, max(10.0, r.width() - 40), 3)
             p.setBrush(QColor(theme.SURFACE3)); p.drawRoundedRect(ov, 1.5, 1.5)
             c = QColor(acc); c.setAlpha(170); p.setBrush(c)
             x0 = ov.left() + ov.width() * a / self.duration
             x1 = ov.left() + ov.width() * b / self.duration
             p.drawRoundedRect(QRectF(x0, 3, max(4.0, x1 - x0), 3), 1.5, 1.5)
+            zf = QFont(self.font()); zf.setPointSizeF(7); zf.setWeight(QFont.DemiBold); p.setFont(zf)
+            p.setPen(QColor(theme.MUTED))
+            z = self.zoom()
+            p.drawText(QRectF(r.right() - 36, 0, 36, 11), Qt.AlignRight | Qt.AlignVCenter,
+                       f"{z:.0f}×" if z >= 10 else f"{z:.1f}×")
+            p.setPen(Qt.NoPen)
         p.save()
         p.setClipRect(QRectF(r.left() - 1, 8, r.width() + 2, self.height()))
         if self.kept is not None:
@@ -254,6 +260,12 @@ class Timeline(QWidget):
         if self._pan is not None:
             self._pan = None
             self.setCursor(Qt.PointingHandCursor)
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.LeftButton and self.zoomed():
+            self.fit()
+        else:
+            super().mouseDoubleClickEvent(e)
 
     def contextMenuEvent(self, e):
         e.accept()          # right button is for dragging, no menu

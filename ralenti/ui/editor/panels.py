@@ -12,7 +12,7 @@ from ...core.edit import VIDEO_CONTAINERS
 from ...core.encoders import ENCODERS
 from ...core.engines import available_engines, engine_for, engines, resolve_model
 from ...core.merge import compat_issues
-from ...core.naming import PLACEHOLDERS
+from ...core.naming import AUTO, PLACEHOLDERS
 from ...core.segments import segments, to_cuts
 from ...core.space import BPP
 from ...core.transform import output_size
@@ -668,14 +668,7 @@ class OutputPanel(Panel):
             lock(self.container.group.button(i), ok, tip,
                  f"{enc.label if enc else 'This encoder'} can't be stored in .{val}.", keep=cur == val)
         if an:
-            bits = ["{name}", "ralenti"]
-            if an["motion"]:
-                bits.append("{model}")
-            if an["slow"] != 1:
-                bits.append("slow{slowmo}x")
-            if an["vmaf"]:
-                bits.append("vmaf{vmaf}")
-            self._auto = "_".join(bits)
+            self._auto = AUTO
             self.name.setPlaceholderText("Automatic: " + self._auto)
             p = preview_output(self.s, an)
             self.preview.setText(f"{p.name}\n{p.parent}")
